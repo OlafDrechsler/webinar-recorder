@@ -43,7 +43,7 @@ statt parallel mitschreiben zu müssen – und die Datenmenge bleibt klein.
 
 1. Dieses Repository herunterladen (grüner **Code**-Knopf → *Download ZIP*) oder klonen:
    ```
-   git clone https://github.com/DEIN-GITHUB-NAME/webinar-recorder.git
+   git clone https://github.com/OlafDrechsler/webinar-recorder.git
    ```
 2. In den Ordner wechseln und **`Setup.bat` per Doppelklick** ausführen.
    Das installiert die Python-Pakete, FFmpeg und legt die Verknüpfungen an
