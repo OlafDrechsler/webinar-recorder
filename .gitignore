@@ -1,0 +1,18 @@
+# --- Persönliche Daten: NICHT veröffentlichen ---
+recordings/            # echte Aufnahmen (Audio, Folien)
+install_log_*.txt      # Logs enthalten Benutzername/Pfade
+
+# --- Python ---
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# --- temporäre Test-Ausgaben ---
+tools/_*/
+tools/_*.wav
+tools/_*.png
+
+# --- Betriebssystem ---
+Thumbs.db
+desktop.ini
+.DS_Store

@@ -1,0 +1,8 @@
+mss
+numpy
+Pillow
+soundfile
+PyAudioWPatch
+PySide6
+keyboard
+pytest
