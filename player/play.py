@@ -2,8 +2,11 @@
 
 Plays the system-audio track as the master timeline, mixes in each microphone
 segment at its correct start time, and shows the slide that was on screen at
-each moment (from the second-offset in each slide filename). Supports pause,
-seek, and independent System/Mikro volume sliders (remembered across sessions).
+each moment (from the second-offset in each slide filename).
+
+Controls: click the slide = play/pause, double-click its left/right half = skip
+10 s back/forward, playback speed 50–200 %, the current slide's filename is shown,
+and independent System/Mikro volume sliders (all remembered across sessions).
 
 Run:  python player/play.py [session_folder]
 If no folder is given, a folder picker opens.
@@ -16,11 +19,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtCore import QUrl, Qt
+from PySide6.QtCore import QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -31,7 +35,8 @@ from PySide6.QtWidgets import (
 )
 
 from core.mic_playback import parse_segment_start, segment_local_offset
-from core.settings import get_player_volumes, set_player_volumes
+from core.playback import SEEK_STEP_MS, seek_target, speed_percent_values
+from core.settings import get_data_dir, get_player_volumes, set_player_volumes
 from core.slide_timeline import build_timeline, slide_for_second
 
 # Re-sync a segment if it has drifted from the master by more than this.
@@ -49,6 +54,36 @@ def _find_track(session: Path, stem: str) -> Path | None:
 def _fmt(ms: int) -> str:
     s = max(0, ms) // 1000
     return f"{s // 60:02d}:{s % 60:02d}"
+
+
+class SlideLabel(QLabel):
+    """Slide display that turns clicks into transport actions.
+
+    Single click → play/pause; double click on the left/right half → skip back/
+    forward. A short timer disambiguates the two so a double click doesn't also
+    fire a single click.
+    """
+
+    clicked = Signal()
+    seek_back = Signal()
+    seek_forward = Signal()
+
+    def __init__(self, text: str = "") -> None:
+        super().__init__(text)
+        self._single = QTimer(self)
+        self._single.setSingleShot(True)
+        self._single.setInterval(max(200, QApplication.doubleClickInterval()))
+        self._single.timeout.connect(self.clicked.emit)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        self._single.start()  # may be cancelled by a following double click
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        self._single.stop()
+        if event.position().x() < self.width() / 2:
+            self.seek_back.emit()
+        else:
+            self.seek_forward.emit()
 
 
 class MicSegment:
@@ -98,10 +133,17 @@ class Player(QWidget):
             seg.out.setVolume(mic_vol / 100.0)
 
         # --- UI ---
-        self._slide_label = QLabel("Keine Folie")
+        self._slide_label = SlideLabel("Keine Folie")
         self._slide_label.setAlignment(Qt.AlignCenter)
         self._slide_label.setMinimumSize(640, 400)
         self._slide_label.setStyleSheet("background:#222;color:#aaa;")
+        self._slide_label.setToolTip("Klick = Play/Pause · Doppelklick links/rechts = 10 s zurück/vor")
+        self._slide_label.clicked.connect(self._toggle_play)
+        self._slide_label.seek_back.connect(lambda: self._seek_relative(-SEEK_STEP_MS))
+        self._slide_label.seek_forward.connect(lambda: self._seek_relative(SEEK_STEP_MS))
+
+        self._fname = QLabel("Folie: —")
+        self._fname.setStyleSheet("color:#888;")
 
         self._play_btn = QPushButton("Abspielen")
         self._play_btn.clicked.connect(self._toggle_play)
@@ -110,10 +152,20 @@ class Player(QWidget):
         self._time = QLabel("00:00 / 00:00")
         self._seg_info = QLabel(f"Mikro-Segmente: {len(self._segments)}")
 
+        # Playback speed: 50 %..200 % in 10 % steps.
+        self._rate = 1.0
+        self._speed = QComboBox()
+        for pct in speed_percent_values():
+            self._speed.addItem(f"{pct} %", pct)
+        self._speed.setCurrentText("100 %")
+        self._speed.currentIndexChanged.connect(self._on_speed)
+
         controls = QHBoxLayout()
         controls.addWidget(self._play_btn)
         controls.addWidget(self._slider)
         controls.addWidget(self._time)
+        controls.addWidget(QLabel("Tempo:"))
+        controls.addWidget(self._speed)
 
         # Volume sliders (System + Mikro), each remembered across sessions.
         self._sys_vol = QSlider(Qt.Horizontal)
@@ -138,6 +190,7 @@ class Player(QWidget):
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._slide_label, stretch=1)
+        layout.addWidget(self._fname)
         layout.addLayout(controls)
         layout.addLayout(vol_row)
         layout.addWidget(self._seg_info)
@@ -179,6 +232,17 @@ class Player(QWidget):
         self._system.setPosition(ms)
         self._sync_segments(ms)
 
+    def _seek_relative(self, delta_ms: int) -> None:
+        target = seek_target(self._system.position(), delta_ms, self._system.duration())
+        self._system.setPosition(target)
+        self._sync_segments(target)
+
+    def _on_speed(self) -> None:
+        self._rate = self._speed.currentData() / 100.0
+        self._system.setPlaybackRate(self._rate)
+        for seg in self._segments:
+            seg.player.setPlaybackRate(self._rate)
+
     def _on_duration(self, ms: int) -> None:
         self._slider.setRange(0, ms)
 
@@ -213,6 +277,7 @@ class Player(QWidget):
             self._slide_label.setPixmap(
                 pix.scaled(self._slide_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
             )
+            self._fname.setText(f"Folie: {name}")
 
 
 def main() -> int:
@@ -220,7 +285,10 @@ def main() -> int:
     if len(sys.argv) > 1:
         session = Path(sys.argv[1])
     else:
-        folder = QFileDialog.getExistingDirectory(None, "Aufnahme-Ordner wählen")
+        # Start the picker at the saved recordings location, not the program dir.
+        folder = QFileDialog.getExistingDirectory(
+            None, "Aufnahme-Ordner wählen", str(get_data_dir())
+        )
         if not folder:
             return 0
         session = Path(folder)

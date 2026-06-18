@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QProgressDialog
 
 from core.loudness import aggregate_mean_db, compute_gain_db
 from core.settings import get_mic_device
@@ -112,8 +112,24 @@ def main() -> int:
     # Post-process audio (recorders already stopped in closeEvent): measure each
     # source's loudness, then transcode to MP3 applying a clip-safe gain so the
     # system track and the mic segments end up at a similar volume on playback.
+    # A small progress window keeps the user informed (this can take a while for
+    # long recordings); the FFmpeg calls themselves no longer flash any windows.
     if ffmpeg_available():
-        _normalize_and_transcode(system_wav, mic.segments)
+        total = 1 + len(mic.segments)
+        dialog = QProgressDialog("Aufnahme wird verarbeitet…", None, 0, total)
+        dialog.setWindowTitle("Bitte warten")
+        dialog.setWindowModality(Qt.ApplicationModal)
+        dialog.setMinimumDuration(0)
+        dialog.show()
+
+        def report(label: str, done: int, steps: int) -> None:
+            dialog.setMaximum(steps)
+            dialog.setValue(done)
+            dialog.setLabelText(f"Aufnahme wird verarbeitet…\n{label}")
+            QApplication.processEvents()
+
+        _normalize_and_transcode(system_wav, mic.segments, progress=report)
+        dialog.close()
         fmt = "MP3 (lautstärke-angeglichen)"
     else:
         fmt = "WAV (FFmpeg nicht gefunden)"
@@ -123,7 +139,7 @@ def main() -> int:
     return 0
 
 
-def _normalize_and_transcode(system_wav: Path, mic_segments: list[Path]) -> None:
+def _normalize_and_transcode(system_wav: Path, mic_segments: list[Path], progress=None) -> None:
     """Loudness-match system + mic, then transcode all tracks to MP3.
 
     Loudness is EBU R128 integrated loudness (LUFS), which ignores silence, with
@@ -131,19 +147,32 @@ def _normalize_and_transcode(system_wav: Path, mic_segments: list[Path]) -> None
     gain. All mic segments share ONE gain (from their combined loudness) so their
     relative dynamics stay intact while their overall loudness matches the system
     track. Measuring happens before transcode because transcode deletes the WAV.
+
+    ``progress(label, done, total)`` is called before each step for the UI.
     """
+    total = 1 + len(mic_segments)
+
+    def step(label: str, done: int) -> None:
+        if progress is not None:
+            progress(label, done, total)
+
+    step("System-Ton wird umgewandelt…", 0)
     sys_lufs, sys_tp = measure_loudness(system_wav)
     transcode_to_mp3(system_wav, gain_db=compute_gain_db(sys_lufs, sys_tp))
 
-    if not mic_segments:
-        return
-    measured = [measure_loudness(seg) for seg in mic_segments]
-    mic_lufs = aggregate_mean_db([lufs for lufs, _ in measured])
-    peaks = [tp for _, tp in measured if tp is not None]
-    mic_tp = max(peaks) if peaks else None
-    mic_gain = compute_gain_db(mic_lufs, mic_tp)
-    for seg in mic_segments:
-        transcode_to_mp3(seg, gain_db=mic_gain)
+    n = len(mic_segments)
+    if n:
+        measured = []
+        for i, seg in enumerate(mic_segments):
+            step(f"Analysiere Mikro-Segment {i + 1}/{n}…", 1)
+            measured.append(measure_loudness(seg))
+        mic_lufs = aggregate_mean_db([lufs for lufs, _ in measured])
+        peaks = [tp for _, tp in measured if tp is not None]
+        mic_gain = compute_gain_db(mic_lufs, max(peaks) if peaks else None)
+        for i, seg in enumerate(mic_segments):
+            step(f"Wandle Mikro-Segment {i + 1}/{n} um…", 1 + i)
+            transcode_to_mp3(seg, gain_db=mic_gain)
+    step("Fertig.", total)
 
 
 if __name__ == "__main__":

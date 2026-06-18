@@ -26,9 +26,11 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QRadioButton,
     QVBoxLayout,
     QWidget,
 )
@@ -77,7 +79,7 @@ class ControlWindow(QWidget):
         self._state = CaptureState()
         self._region: Region | None = None
         self._photo_on = True
-        self._mic_override = False
+        self._mic_mode = "auto"   # "an" / "aus" / "auto" via radio buttons
         self._work_area: WorkAreaWindow | None = None
         self._mic_test: MicLevelWindow | None = None
 
@@ -92,10 +94,20 @@ class ControlWindow(QWidget):
         self._photo_btn.clicked.connect(self._toggle_photo)
         mark_btn = QPushButton("Bild bearbeiten")
         mark_btn.clicked.connect(self._open_work_area)
-        self._mic_btn = QPushButton()
-        self._mic_btn.clicked.connect(self._toggle_mic_override)
         mic_test_btn = QPushButton("Mikro-Pegel-Test")
         mic_test_btn.clicked.connect(self._open_mic_test)
+
+        # Mic mode as a three-way radio: an / aus / auto.
+        self._rb_on = QRadioButton("an")
+        self._rb_off = QRadioButton("aus")
+        self._rb_auto = QRadioButton("auto")
+        self._mic_group = QButtonGroup(self)
+        for rb in (self._rb_on, self._rb_off, self._rb_auto):
+            self._mic_group.addButton(rb)
+        self._rb_auto.setChecked(True)  # set BEFORE connecting, so no early callback
+        self._rb_on.toggled.connect(lambda on: on and self._set_mic_mode("on"))
+        self._rb_off.toggled.connect(lambda on: on and self._set_mic_mode("off"))
+        self._rb_auto.toggled.connect(lambda on: on and self._set_mic_mode("auto"))
 
         self._status = QLabel()
         self._mic_status = QLabel()
@@ -106,7 +118,11 @@ class ControlWindow(QWidget):
         row2 = QHBoxLayout()
         row2.addWidget(mark_btn)
         row3 = QHBoxLayout()
-        row3.addWidget(self._mic_btn)
+        row3.addWidget(QLabel("Mikro:"))
+        row3.addWidget(self._rb_on)
+        row3.addWidget(self._rb_off)
+        row3.addWidget(self._rb_auto)
+        row3.addStretch(1)
         row3.addWidget(mic_test_btn)
 
         layout = QVBoxLayout(self)
@@ -130,7 +146,7 @@ class ControlWindow(QWidget):
         self._hotkeys = _Hotkeys()
         self._hotkeys.toggle_photo.connect(self._toggle_photo)
         self._hotkeys.highlight.connect(self._open_work_area)
-        self._hotkeys.toggle_mic_override.connect(self._toggle_mic_override)
+        self._hotkeys.toggle_mic_override.connect(self._cycle_mic_mode)
         self._hotkeys_ok = self._hotkeys.register()
 
         # --- timers ---
@@ -164,30 +180,40 @@ class ControlWindow(QWidget):
         self._photo_on = not self._photo_on
         self._refresh_labels()
 
-    def _toggle_mic_override(self) -> None:
-        self._mic_override = not self._mic_override
-        self._mic.set_override(self._mic_override)
+    def _set_mic_mode(self, mode: str) -> None:
+        self._mic_mode = mode
+        self._mic.set_mic_mode(mode)
         self._refresh_labels()
+
+    def _cycle_mic_mode(self) -> None:
+        # Hotkey ctrl+alt+m cycles auto -> an -> aus -> auto (updates the radios).
+        order = ["auto", "on", "off"]
+        nxt = order[(order.index(self._mic_mode) + 1) % len(order)]
+        {"auto": self._rb_auto, "on": self._rb_on, "off": self._rb_off}[nxt].setChecked(True)
 
     def _refresh_labels(self) -> None:
         self._photo_btn.setText(f"Foto-Aufnahme: {'AN' if self._photo_on else 'aus'}")
-        self._mic_btn.setText(
-            f"Mikro-Override: {'AN (erzwingt)' if self._mic_override else 'aus (Auto)'}"
-        )
         hk = "Hotkeys aktiv" if getattr(self, "_hotkeys_ok", False) else "Hotkeys aus (Admin nötig)"
         saved = len(list(self._slides_dir.glob("*.png")))
         region = "—" if self._region is None else "gewählt"
         rec = "läuft ●" if self._recording else "bereit (nicht gestartet)"
         self._status.setText(f"Aufnahme: {rec} | Bereich: {region} | Folien: {saved} | {hk}")
-        if not self._recording:
-            self._mic_status.setText("Mikro: Monitor (Pegel-Test möglich, nimmt noch nicht auf)")
-            self._mic_status.setStyleSheet("color: gray;")
-        elif self._mic.is_active:
-            self._mic_status.setText("Mikro: nimmt auf ●")
-            self._mic_status.setStyleSheet("color: red;")
-        else:
-            self._mic_status.setText("Mikro: Auto (wartet auf Geräusch)")
-            self._mic_status.setStyleSheet("color: gray;")
+
+        recording = "red" if self._recording else "gray"
+        if self._mic_mode == "off":
+            text, color = "Mikro: AUS (nimmt nichts auf)", "gray"
+        elif self._mic_mode == "on":
+            text = "Mikro: AN (nimmt durchgehend auf ●)" if self._recording else "Mikro: AN (startet mit der Aufnahme)"
+            color = recording
+        else:  # auto
+            if not self._recording:
+                text, color = "Mikro: Auto (Pegel-Test möglich, nimmt noch nicht auf)", "gray"
+            elif self._mic.is_active:
+                text, color = "Mikro: Auto – nimmt auf ●", "red"
+            else:
+                text, color = "Mikro: Auto – wartet auf Geräusch", "gray"
+        self._mic_status.setText(text)
+        self._mic_status.setStyleSheet(f"color: {color};")
 
     # ----- capture loop -----
     def _seconds(self) -> int:

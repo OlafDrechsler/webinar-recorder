@@ -25,6 +25,10 @@ from pathlib import Path
 _cached: str | None = None
 _searched = False
 
+# Stop each FFmpeg call from flashing a console window when the app is launched
+# via pythonw (no console). 0 on non-Windows, so it's harmless there.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 def _candidate_paths() -> list[Path]:
     """Well-known places FFmpeg ends up, in addition to the PATH."""
@@ -93,7 +97,7 @@ def measure_levels(path: Path) -> tuple[float | None, float | None]:
         "-af", "volumedetect", "-f", "null", "-",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, creationflags=_NO_WINDOW)
     except OSError:
         return (None, None)
     # volumedetect prints its stats to stderr.
@@ -141,7 +145,7 @@ def measure_loudness(path: Path) -> tuple[float | None, float | None]:
         "-f", "null", "-",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, creationflags=_NO_WINDOW)
     except OSError:
         return (None, None)
     return parse_loudnorm_json(proc.stderr or "")
@@ -167,7 +171,7 @@ def transcode_to_mp3(
         cmd += ["-af", f"volume={gain_db:.2f}dB"]
     cmd += ["-c:a", "libmp3lame", "-b:a", bitrate, str(mp3_path)]
     try:
-        subprocess.run(cmd, check=True, capture_output=True)
+        subprocess.run(cmd, check=True, capture_output=True, creationflags=_NO_WINDOW)
     except (subprocess.CalledProcessError, OSError):
         return wav_path
 

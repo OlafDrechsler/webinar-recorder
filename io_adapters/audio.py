@@ -187,7 +187,8 @@ class SegmentedMicRecorder:
         self._dir = Path(out_dir)
         self._t0 = start_time
         self._segmenter = MicSegmenter(threshold, hangover_seconds)
-        self._override = False
+        # Mic mode: "auto" = voice-activated, "on" = always record, "off" = muted.
+        self._mode = "auto"
         # When False the stream runs for level metering only (monitor mode) and
         # writes no segment files. Flipped on by enable_recording()/start().
         self._record_enabled = True
@@ -204,8 +205,17 @@ class SegmentedMicRecorder:
         self._lock = threading.Lock()
 
     # --- live controls (called from GUI thread) ---
+    def set_mic_mode(self, mode: str) -> None:
+        """Set recording mode: 'on' (always), 'off' (muted), or 'auto' (VAD)."""
+        self._mode = mode
+
     def set_override(self, on: bool) -> None:
-        self._override = on
+        # Backwards-compatible shim: True forces recording, False returns to auto.
+        self._mode = "on" if on else "auto"
+
+    @property
+    def mode(self) -> str:
+        return self._mode
 
     def set_threshold(self, value: float) -> None:
         self._segmenter.threshold = value
@@ -257,8 +267,14 @@ class SegmentedMicRecorder:
         # Monitor mode: measure the level but don't segment or write anything.
         if not self._record_enabled:
             return (None, pyaudio.paContinue)
+        # Muted: never record; close a segment that may still be open.
+        if self._mode == "off":
+            if self._file is not None:
+                self._segmenter.finalize()
+                self._close_segment()
+            return (None, pyaudio.paContinue)
         now = time.monotonic() - self._t0
-        event = self._segmenter.update(self._level, now, self._override)
+        event = self._segmenter.update(self._level, now, self._mode == "on")
         if event and event[0] == "start":
             self._open_segment(event[1])
         if self._file is not None:
