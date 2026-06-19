@@ -202,11 +202,13 @@ class AnnotationCanvas(QWidget):
 class WorkAreaWindow(QWidget):
     saved = Signal(str)  # emitted with the saved filename (for the player to refresh)
 
-    def __init__(self, frame: np.ndarray, seconds: int, slides_dir: Path) -> None:
+    def __init__(self, frame: np.ndarray, seconds: int, slides_dir: Path,
+                 save_as: str | None = None) -> None:
         super().__init__()
         self.setWindowTitle(f"Arbeitsbereich – Sekunde {seconds}")
         self._seconds = seconds
         self._slides_dir = Path(slides_dir)
+        self._save_as = save_as  # fixed filename to overwrite (edit), else a new note
 
         base = QPixmap.fromImage(frame_to_qimage(frame))
         self._canvas = AnnotationCanvas(base)
@@ -278,8 +280,11 @@ class WorkAreaWindow(QWidget):
         # Commit any open inline text, write one PNG, then close — saving the same
         # frozen frame twice would only produce duplicates at the same timestamp.
         self._canvas.commit_pending_text()
-        existing = [p.name for p in self._slides_dir.glob("*.png")]
-        name = marked_frame_name(self._seconds, existing)
+        if self._save_as:                       # edit in place (overwrite same file)
+            name = self._save_as
+        else:                                   # new note with running counter
+            existing = [p.name for p in self._slides_dir.glob("*.png")]
+            name = marked_frame_name(self._seconds, existing)
         self._canvas.flattened().save(str(self._slides_dir / name), "PNG")
         self.saved.emit(name)
         self.close()

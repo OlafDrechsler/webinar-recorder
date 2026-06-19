@@ -23,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEventLoop, QObject, QThread, Qt, Signal
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QProgressDialog
 
 from core.loudness import aggregate_mean_db, compute_gain_db
@@ -117,21 +117,7 @@ def main() -> int:
     # A small progress window keeps the user informed (this can take a while for
     # long recordings); the FFmpeg calls themselves no longer flash any windows.
     if ffmpeg_available():
-        total = 1 + len(mic.segments)
-        dialog = QProgressDialog("Aufnahme wird verarbeitet…", None, 0, total)
-        dialog.setWindowTitle("Bitte warten")
-        dialog.setWindowModality(Qt.ApplicationModal)
-        dialog.setMinimumDuration(0)
-        dialog.show()
-
-        def report(label: str, done: int, steps: int) -> None:
-            dialog.setMaximum(steps)
-            dialog.setValue(done)
-            dialog.setLabelText(f"Aufnahme wird verarbeitet…\n{label}")
-            QApplication.processEvents()
-
-        _normalize_and_transcode(system_wav, mic.segments, progress=report)
-        dialog.close()
+        _run_postprocessing_with_progress(system_wav, mic.segments)
         fmt = "MP3 (lautstärke-angeglichen)"
     else:
         fmt = "WAV (FFmpeg nicht gefunden)"
@@ -175,6 +161,50 @@ def _normalize_and_transcode(system_wav: Path, mic_segments: list[Path], progres
             step(f"Wandle Mikro-Segment {i + 1}/{n} um…", 1 + i)
             transcode_to_mp3(seg, gain_db=mic_gain)
     step("Fertig.", total)
+
+
+class _TranscodeWorker(QObject):
+    """Runs the (blocking) FFmpeg work off the GUI thread so the progress window
+    stays responsive (no "Not responding")."""
+
+    progress = Signal(str)
+    finished = Signal()
+
+    def __init__(self, system_wav: Path, segments: list[Path]) -> None:
+        super().__init__()
+        self._system_wav = system_wav
+        self._segments = segments
+
+    def run(self) -> None:
+        def report(label: str, done: int, total: int) -> None:
+            self.progress.emit(f"Aufnahme wird verarbeitet…\n{label} ({done}/{total})")
+
+        _normalize_and_transcode(self._system_wav, self._segments, progress=report)
+        self.finished.emit()
+
+
+def _run_postprocessing_with_progress(system_wav: Path, segments: list[Path]) -> None:
+    # Indeterminate (marquee) progress so it visibly keeps moving during the long
+    # system-track transcode; the actual work runs in a worker thread.
+    dialog = QProgressDialog("Aufnahme wird verarbeitet…", None, 0, 0)
+    dialog.setWindowTitle("Bitte warten")
+    dialog.setWindowModality(Qt.ApplicationModal)
+    dialog.setCancelButton(None)
+    dialog.setMinimumDuration(0)
+    dialog.show()
+
+    thread = QThread()
+    worker = _TranscodeWorker(system_wav, segments)
+    worker.moveToThread(thread)
+    thread.started.connect(worker.run)
+    worker.progress.connect(dialog.setLabelText)  # queued onto the GUI thread
+    loop = QEventLoop()
+    worker.finished.connect(loop.quit)
+    worker.finished.connect(thread.quit)
+    thread.start()
+    loop.exec()
+    thread.wait()
+    dialog.close()
 
 
 if __name__ == "__main__":

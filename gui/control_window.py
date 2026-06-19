@@ -70,7 +70,9 @@ class ControlWindow(QWidget):
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} – Aufnahme")
         self.setWindowIcon(app_icon())
-        self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
+        # Stay on top, but a normal top-level window (not Qt.Tool) so it shows in
+        # the taskbar and can be reached with Alt+Tab.
+        self.setWindowFlags(Qt.WindowStaysOnTopHint)
 
         self._system = system_recorder
         self._mic = mic_recorder

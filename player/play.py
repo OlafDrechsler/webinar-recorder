@@ -30,7 +30,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PySide6.QtCore import QSize, QTimer, QUrl, Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QCursor, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QApplication,
@@ -39,6 +39,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLayout,
+    QMenu,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -52,6 +54,14 @@ from core.playback import SEEK_STEP_MS, seek_target, speed_percent_values
 from core.settings import get_data_dir, get_player_volumes, set_player_volumes
 from core.slide_timeline import slide_for_second
 from gui.branding import APP_NAME, app_icon
+from gui.icons import (
+    forward_icon,
+    pause_icon,
+    play_icon,
+    rewind_icon,
+    skip_back_icon,
+    skip_forward_icon,
+)
 from gui.work_area import WorkAreaWindow
 
 _DRIFT_MS = 350          # re-sync a mic segment if it drifts more than this
@@ -71,16 +81,17 @@ def _fmt(ms: int) -> str:
     return f"{s // 60:02d}:{s % 60:02d}"
 
 
-_OVERLAY_BTN = (
-    "QPushButton{background:rgba(20,20,20,160);color:white;border:none;"
-    "border-radius:30px;font-size:20px;min-width:60px;min-height:60px;}"
-    "QPushButton:hover{background:rgba(60,60,60,190);}"
-)
 _TRANSPORT_BTN = (
-    "QPushButton{background:#2a2a2a;color:white;border:none;border-radius:6px;"
-    "padding:4px 12px;}"  # no font-size override -> uses the window's default size
+    "QPushButton{background:#2a2a2a;border:none;border-radius:6px;padding:4px 12px;}"
     "QPushButton:hover{background:#3a3a3a;}"
 )
+
+
+def _round_style(diameter: int) -> str:
+    return (
+        "QPushButton{background:rgba(20,20,20,170);border:none;border-radius:%dpx;}"
+        "QPushButton:hover{background:rgba(60,60,60,205);}" % (diameter // 2)
+    )
 
 
 class ControlsOverlay(QWidget):
@@ -94,14 +105,18 @@ class ControlsOverlay(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setStyleSheet("background: transparent;")
-        self._back = QPushButton("↺ 10")
-        self._play = QPushButton("▶")
-        self._fwd = QPushButton("10 ↻")
-        for b in (self._back, self._play, self._fwd):
-            b.setStyleSheet(_OVERLAY_BTN)
-        self._play.setStyleSheet(
-            _OVERLAY_BTN.replace("min-width:60px;min-height:60px;", "min-width:76px;min-height:76px;font-size:26px;")
-        )
+        self._back = QPushButton()
+        self._play = QPushButton()
+        self._fwd = QPushButton()
+        for b, d in ((self._back, 64), (self._play, 84), (self._fwd, 64)):
+            b.setFixedSize(d, d)
+            b.setStyleSheet(_round_style(d))
+        self._back.setIcon(skip_back_icon(36))
+        self._back.setIconSize(QSize(40, 40))
+        self._fwd.setIcon(skip_forward_icon(36))
+        self._fwd.setIconSize(QSize(40, 40))
+        self._play.setIconSize(QSize(48, 48))
+        self.set_playing(False)
         self._back.clicked.connect(self.back.emit)
         self._play.clicked.connect(self.play_pause.emit)
         self._fwd.clicked.connect(self.forward.emit)
@@ -109,9 +124,9 @@ class ControlsOverlay(QWidget):
         row = QHBoxLayout()
         row.addStretch(1)
         row.addWidget(self._back)
-        row.addSpacing(24)
+        row.addSpacing(28)
         row.addWidget(self._play)
-        row.addSpacing(24)
+        row.addSpacing(28)
         row.addWidget(self._fwd)
         row.addStretch(1)
         outer = QVBoxLayout(self)
@@ -120,7 +135,7 @@ class ControlsOverlay(QWidget):
         outer.addStretch(1)
 
     def set_playing(self, playing: bool) -> None:
-        self._play.setText("❚❚" if playing else "▶")
+        self._play.setIcon(pause_icon(48) if playing else play_icon(48))
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         self.background_clicked.emit()
@@ -181,6 +196,7 @@ class _Cell(QWidget):
     """One film-strip thumbnail with its filename underneath; clickable."""
 
     clicked = Signal(int)
+    context = Signal(int)
 
     def __init__(self, index: int, pixmap: QPixmap | None, name: str, current: bool) -> None:
         super().__init__()
@@ -203,7 +219,10 @@ class _Cell(QWidget):
         lay.addWidget(caption)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
-        self.clicked.emit(self._index)
+        if event.button() == Qt.RightButton:
+            self.context.emit(self._index)
+        else:
+            self.clicked.emit(self._index)
 
 
 class _Empty(QWidget):
@@ -218,6 +237,7 @@ class FilmstripBar(QWidget):
     """Horizontal strip of thumbnails, current centred, empty slots at the edges."""
 
     frame_clicked = Signal(int)
+    frame_context = Signal(int)
     THUMB_W = 140
     THUMB_H = 84
     GAP = 8
@@ -294,6 +314,7 @@ class FilmstripBar(QWidget):
             frame = self._frames[idx]
             cell = _Cell(idx, self._thumb(frame.name), frame.name, idx == self._current)
             cell.clicked.connect(self.frame_clicked.emit)
+            cell.context.connect(self.frame_context.emit)
             self._row.addWidget(cell)
 
 
@@ -369,16 +390,23 @@ class Player(QWidget):
 
         self._filmstrip = FilmstripBar()
         self._filmstrip.frame_clicked.connect(self._on_frame_clicked)
+        self._filmstrip.frame_context.connect(self._show_frame_menu)
 
         # --- transport ---
-        self._back_btn = QPushButton("↺ 10")
+        self._back_btn = QPushButton()
+        self._back_btn.setIcon(rewind_icon(22))
+        self._back_btn.setToolTip("10 s zurück")
         self._back_btn.clicked.connect(lambda: self._seek_relative(-SEEK_STEP_MS))
-        self._play_btn = QPushButton("▶")
+        self._play_btn = QPushButton()
+        self._play_btn.setIcon(play_icon(22))
         self._play_btn.clicked.connect(self._toggle_play)
-        self._fwd_btn = QPushButton("10 ↻")
+        self._fwd_btn = QPushButton()
+        self._fwd_btn.setIcon(forward_icon(22))
+        self._fwd_btn.setToolTip("10 s vor")
         self._fwd_btn.clicked.connect(lambda: self._seek_relative(SEEK_STEP_MS))
         for b in (self._back_btn, self._play_btn, self._fwd_btn):
             b.setStyleSheet(_TRANSPORT_BTN)
+            b.setIconSize(QSize(22, 22))
 
         self._slider = QSlider(Qt.Horizontal)
         self._slider.sliderMoved.connect(self._seek)
@@ -541,7 +569,55 @@ class Player(QWidget):
 
     def _on_note_saved(self, name: str) -> None:
         self._refresh_frames()
-        self.show_slide(name)  # show the freshly saved note as the big image
+        self.show_slide(name)  # show the freshly saved note/edit as the big image
+
+    # ----- film-strip context menu -----
+    def _show_frame_menu(self, index: int) -> None:
+        menu = QMenu(self)
+        act_edit = menu.addAction("Bearbeiten")
+        act_del = menu.addAction("Löschen")
+        chosen = menu.exec(QCursor.pos())
+        if chosen == act_edit:
+            self._edit_frame(index)
+        elif chosen == act_del:
+            self._delete_frame(index)
+
+    def _edit_frame(self, index: int) -> None:
+        """Edit the clicked image in place (overwrites the same file)."""
+        if self._slides_dir is None:
+            return
+        frame = self._frames[index]
+        if self._is_playing():
+            self._toggle_play()
+        try:
+            img = np.asarray(Image.open(self._slides_dir / frame.name).convert("RGB"))
+        except OSError:
+            return
+        self._editor = WorkAreaWindow(img, frame.second, self._slides_dir, save_as=frame.name)
+        self._editor.setWindowIcon(app_icon())
+        self._editor.saved.connect(self._on_note_saved)
+        self._editor.show()
+
+    def _delete_frame(self, index: int) -> None:
+        if self._slides_dir is None:
+            return
+        frame = self._frames[index]
+        if QMessageBox.question(
+            self, "Bild löschen?", f"'{frame.name}' wirklich löschen?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        try:
+            (self._slides_dir / frame.name).unlink()
+        except OSError:
+            pass
+        was_current = frame.name == self._current_slide
+        self._refresh_frames()
+        if was_current:
+            self._current_slide = None
+            self._update_slide(int(self._system.position() // 1000))
+            if self._current_slide is None and self._frames:
+                self.show_slide(self._frames[0].name)
 
     def _refresh_frames(self) -> None:
         """Rebuild timeline + film strip after a note was saved, keeping position."""
@@ -560,7 +636,7 @@ class Player(QWidget):
         return self._system.playbackState() == QMediaPlayer.PlayingState
 
     def _update_play_icons(self, playing: bool) -> None:
-        self._play_btn.setText("❚❚" if playing else "▶")
+        self._play_btn.setIcon(pause_icon(22) if playing else play_icon(22))
         self._overlay.set_playing(playing)
 
     def _toggle_play(self) -> None:
