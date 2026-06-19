@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 
 from core.capture_state import CaptureState
 from core.naming import auto_frame_name
+from gui.branding import APP_NAME, app_icon
 from gui.mic_test import MicLevelWindow
 from gui.region_selector import select_region
 from gui.work_area import WorkAreaWindow
@@ -67,7 +68,8 @@ class _Hotkeys(QObject):
 class ControlWindow(QWidget):
     def __init__(self, system_recorder, mic_recorder, slides_dir: Path) -> None:
         super().__init__()
-        self.setWindowTitle("Webinar-Aufnahme")
+        self.setWindowTitle(f"{APP_NAME} – Aufnahme")
+        self.setWindowIcon(app_icon())
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
 
         self._system = system_recorder

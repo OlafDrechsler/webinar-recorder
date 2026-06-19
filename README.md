@@ -1,6 +1,6 @@
-# Webinar Recorder
+# WebinarOD
 
-Ein Windows-Tool zum Mitschneiden von Live-Webinaren: Es nimmt den **Ton durchgehend**
+**WebinarOD** ist ein Windows-Tool zum Mitschneiden von Live-Webinaren: Es nimmt den **Ton durchgehend**
 auf, fotografiert den **Folienbereich aber nur einmal pro Sekunde** und speichert ein Bild
 nur dann, wenn sich die Folie tatsächlich geändert hat. So kann man in Ruhe zuhören,
 statt parallel mitschreiben zu müssen – und die Datenmenge bleibt klein.

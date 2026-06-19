@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.settings import get_data_dir, get_sortout_config, set_sortout_config
+from gui.branding import APP_NAME, app_icon
 from core.slide_dedupe import (
     COMPARE,
     ELLIPSE,
@@ -205,7 +206,8 @@ class SortOutWindow(QWidget):
         self._ref_index = 0
         self._mask_mode = IGNORE
         self._action = "move"  # "move" or "delete"
-        self.setWindowTitle(f"Folien aussortieren – {self._folder.name}")
+        self.setWindowTitle(f"{APP_NAME} – Folien aussortieren – {self._folder.name}")
+        self.setWindowIcon(app_icon())
 
         self._canvas = MaskCanvas()
         self._ref_label = QLabel()
@@ -470,6 +472,7 @@ class SortOutWindow(QWidget):
 
 def main() -> int:
     app = QApplication(sys.argv)
+    app.setWindowIcon(app_icon())
     if len(sys.argv) > 1:
         folder = Path(sys.argv[1])
     else:

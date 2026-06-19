@@ -28,6 +28,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QProgressDialo
 
 from core.loudness import aggregate_mean_db, compute_gain_db
 from core.settings import get_mic_device
+from gui.branding import app_icon
 from gui.control_window import ControlWindow
 from gui.storage_dialog import StorageDialog
 from io_adapters.audio import SegmentedMicRecorder, SystemAudioRecorder
@@ -78,6 +79,7 @@ def main() -> int:
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
     app = QApplication(sys.argv)
+    app.setWindowIcon(app_icon())
     app.setQuitOnLastWindowClosed(False)
 
     session = _choose_session(app)

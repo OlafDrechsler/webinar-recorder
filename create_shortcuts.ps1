@@ -49,6 +49,10 @@ if (-not $PythonExe) {
 $pyw = Join-Path (Split-Path $PythonExe -Parent) "pythonw.exe"
 if (-not (Test-Path $pyw)) { $pyw = $PythonExe }  # fallback to python.exe
 
+# Use the WebinarOD icon if it exists, else fall back to the interpreter's icon.
+$iconFile = Join-Path $here "assets\icon.ico"
+$icon = if (Test-Path $iconFile) { "$iconFile,0" } else { "$pyw,0" }
+
 function New-Shortcut {
     param($LinkPath, $Arguments, $Description)
     $shell = New-Object -ComObject WScript.Shell
@@ -57,7 +61,7 @@ function New-Shortcut {
     $sc.Arguments = $Arguments
     $sc.WorkingDirectory = $here
     $sc.Description = $Description
-    $sc.IconLocation = "$pyw,0"
+    $sc.IconLocation = $icon
     $sc.Save()
     Write-Host "Erstellt: $LinkPath"
 }
