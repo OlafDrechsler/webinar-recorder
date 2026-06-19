@@ -239,13 +239,14 @@ class AnnotationCanvas(QWidget):
 
     # ----- coordinate mapping -----
     def _display_rect(self) -> QRect:
-        bw, bh = self._base.width(), self._base.height()
-        scale = min(self.width() / bw, self.height() / bh)
-        dw, dh = int(bw * scale), int(bh * scale)
+        scale = self._scale()
+        dw, dh = int(self._base.width() * scale), int(self._base.height() * scale)
         return QRect((self.width() - dw) // 2, (self.height() - dh) // 2, dw, dh)
 
     def _scale(self) -> float:
-        return min(self.width() / self._base.width(), self.height() / self._base.height())
+        # Never enlarge beyond native resolution — upscaling a screenshot looks
+        # pixelated/soft. Shrink to fit when the window is smaller, else show 1:1.
+        return min(self.width() / self._base.width(), self.height() / self._base.height(), 1.0)
 
     def _to_image(self, p: QPoint) -> QPointF:
         rect, scale = self._display_rect(), self._scale()
