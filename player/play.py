@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtCore import QTimer, QUrl, Qt, Signal
+from PySide6.QtCore import QSize, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
@@ -35,7 +35,9 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -71,8 +73,8 @@ _OVERLAY_BTN = (
     "QPushButton:hover{background:rgba(60,60,60,190);}"
 )
 _TRANSPORT_BTN = (
-    "QPushButton{background:#2a2a2a;color:white;border:none;border-radius:22px;"
-    "font-size:16px;min-width:64px;min-height:44px;}"
+    "QPushButton{background:#2a2a2a;color:white;border:none;border-radius:6px;"
+    "padding:4px 12px;}"  # no font-size override -> uses the window's default size
     "QPushButton:hover{background:#3a3a3a;}"
 )
 
@@ -131,7 +133,7 @@ class SlideLabel(QLabel):
     def __init__(self) -> None:
         super().__init__("Kein Ordner geladen")
         self.setAlignment(Qt.AlignCenter)
-        self.setMinimumSize(640, 360)
+        self.setMinimumSize(360, 240)  # allow the window to be dragged fairly small
         self.setStyleSheet("background:#161616;color:#888;")
         self._single = QTimer(self)
         self._single.setSingleShot(True)
@@ -226,7 +228,17 @@ class FilmstripBar(QWidget):
         self._row.setContentsMargins(6, 4, 6, 4)
         self._row.setSpacing(self.GAP)
         self._row.setAlignment(Qt.AlignHCenter)
+        # Don't let the strip dictate a minimum window width: it must be able to
+        # shrink (showing fewer thumbnails) when the window is made narrower.
+        self._row.setSizeConstraint(QLayout.SetNoConstraint)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.setFixedHeight(self.THUMB_H + 24)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(0, self.THUMB_H + 24)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(0, self.THUMB_H + 24)
 
     def set_session(self, slides_dir: Path, frames: list) -> None:
         self._slides_dir = slides_dir
@@ -323,6 +335,8 @@ class Player(QWidget):
         # --- header: folder picker ---
         self._path_lbl = QLabel("(kein Ordner geladen)")
         self._path_lbl.setStyleSheet("color:#888;")
+        self._path_lbl.setMinimumWidth(0)
+        self._path_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         choose = QPushButton("Ordner wählen…")
         choose.clicked.connect(self._choose_folder)
         header = QHBoxLayout()
@@ -400,6 +414,10 @@ class Player(QWidget):
         vol_row.addWidget(self._mic_vol_lbl)
 
         self._seg_info = QLabel("Mikro-Segmente: 0")
+        self._seg_info.setAlignment(Qt.AlignRight)
+        seg_row = QHBoxLayout()
+        seg_row.addStretch(1)
+        seg_row.addWidget(self._seg_info)
 
         layout = QVBoxLayout(self)
         layout.addLayout(header)
@@ -408,7 +426,7 @@ class Player(QWidget):
         layout.addWidget(self._filmstrip)
         layout.addLayout(controls)
         layout.addLayout(vol_row)
-        layout.addWidget(self._seg_info)
+        layout.addLayout(seg_row)
 
         self._system.positionChanged.connect(self._on_position)
         self._system.durationChanged.connect(self._on_duration)
@@ -452,7 +470,10 @@ class Player(QWidget):
             seg.player.setPlaybackRate(self._rate)
 
         self.setWindowTitle(f"{APP_NAME} – {session.name}")
-        self._path_lbl.setText(str(session))
+        # Show just the folder name (full path as tooltip) so a long path doesn't
+        # force a wide minimum window size.
+        self._path_lbl.setText(session.name)
+        self._path_lbl.setToolTip(str(session))
         self._seg_info.setText(f"Mikro-Segmente: {len(self._segments)}")
         self._slider.setValue(0)
         self._time.setText("00:00 / 00:00")
