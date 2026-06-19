@@ -213,7 +213,7 @@ class _Cell(QWidget):
     clicked = Signal(int)
     context = Signal(int)
 
-    def __init__(self, index: int, pixmap: QPixmap | None, name: str, current: bool) -> None:
+    def __init__(self, index: int, pixmap: QPixmap | None, caption_text: str, current: bool) -> None:
         super().__init__()
         self._index = index
         thumb = QLabel()
@@ -223,8 +223,9 @@ class _Cell(QWidget):
         thumb.setStyleSheet(f"background:#0e0e0e;border:2px solid {border};")
         if pixmap is not None:
             thumb.setPixmap(pixmap)
-        caption = QLabel(name)
-        caption.setAlignment(Qt.AlignCenter)
+        caption = QLabel(caption_text)
+        caption.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+        caption.setWordWrap(True)
         caption.setStyleSheet("color:#aaa;font-size:10px;")
         caption.setFixedWidth(FilmstripBar.THUMB_W)
         lay = QVBoxLayout(self)
@@ -271,13 +272,13 @@ class FilmstripBar(QWidget):
         # shrink (showing fewer thumbnails) when the window is made narrower.
         self._row.setSizeConstraint(QLayout.SetNoConstraint)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-        self.setFixedHeight(self.THUMB_H + 24)
+        self.setFixedHeight(self.THUMB_H + 40)  # room for a two-line caption
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802
-        return QSize(0, self.THUMB_H + 24)
+        return QSize(0, self.THUMB_H + 40)
 
     def sizeHint(self) -> QSize:  # noqa: N802
-        return QSize(0, self.THUMB_H + 24)
+        return QSize(0, self.THUMB_H + 40)
 
     def set_session(self, slides_dir: Path, frames: list) -> None:
         self._slides_dir = slides_dir
@@ -327,7 +328,8 @@ class FilmstripBar(QWidget):
                 self._row.addWidget(_Empty())
                 continue
             frame = self._frames[idx]
-            cell = _Cell(idx, self._thumb(frame.name), frame.name, idx == self._current)
+            caption = f"{frame.name} - {_fmt(frame.second * 1000)}"
+            cell = _Cell(idx, self._thumb(frame.name), caption, idx == self._current)
             cell.clicked.connect(self.frame_clicked.emit)
             cell.context.connect(self.frame_context.emit)
             self._row.addWidget(cell)
@@ -471,11 +473,17 @@ class Player(QWidget):
         vol_row.addWidget(self._mic_vol)
         vol_row.addWidget(self._mic_vol_lbl)
 
-        self._seg_info = QLabel("Mikro-Segmente: 0")
-        self._seg_info.setAlignment(Qt.AlignRight)
+        # Mic-segment list with jump-to: a button whose menu lists each segment's
+        # start time (mm:ss); choosing one seeks there and plays.
+        self._seg_btn = QPushButton("Mikro-Segmente: 0")
+        self._seg_btn.setStyleSheet(
+            "QPushButton{color:white;background:#2a2a2a;border:none;border-radius:6px;padding:4px 10px;}"
+        )
+        self._seg_menu = QMenu(self._seg_btn)
+        self._seg_btn.setMenu(self._seg_menu)
         seg_row = QHBoxLayout()
         seg_row.addStretch(1)
-        seg_row.addWidget(self._seg_info)
+        seg_row.addWidget(self._seg_btn)
 
         layout = QVBoxLayout(self)
         layout.addLayout(header)
@@ -535,7 +543,7 @@ class Player(QWidget):
         # force a wide minimum window size.
         self._path_lbl.setText(session.name)
         self._path_lbl.setToolTip(str(session))
-        self._seg_info.setText(f"Mikro-Segmente: {len(self._segments)}")
+        self._rebuild_segment_menu()
         self._slider.setValue(0)
         self._time.setText("00:00 / 00:00")
         self._filmstrip.set_session(self._slides_dir, self._frames)
@@ -717,6 +725,20 @@ class Player(QWidget):
         self._time.setToolTip(f"{ms // 1000} s")  # current time in seconds
         self._update_slide(ms // 1000)
         self._sync_segments(ms)
+
+    # ----- mic segment list / jump -----
+    def _rebuild_segment_menu(self) -> None:
+        self._seg_menu.clear()
+        self._seg_btn.setText(f"Mikro-Segmente: {len(self._segments)}")
+        self._seg_btn.setEnabled(bool(self._segments))
+        for seg in sorted(self._segments, key=lambda s: s.start_ms):
+            act = self._seg_menu.addAction(_fmt(seg.start_ms))
+            act.triggered.connect(lambda _=False, s=seg: self._jump_to_segment(s))
+
+    def _jump_to_segment(self, seg: "MicSegment") -> None:
+        self._seek(seg.start_ms)
+        if not self._is_playing():
+            self._toggle_play()
 
     # ----- mic segment sync -----
     def _sync_segments(self, ms: int) -> None:

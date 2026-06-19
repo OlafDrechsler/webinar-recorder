@@ -14,7 +14,8 @@ import re
 from typing import Iterable, NamedTuple, Optional
 
 _AUTO = re.compile(r"^(\d+)\.png$", re.IGNORECASE)
-_MARKED = re.compile(r"^(\d+)_markiert_\d+\.png$", re.IGNORECASE)
+# Annotated frames: new "_edit_" and legacy "_markiert_".
+_MARKED = re.compile(r"^(\d+)_(?:markiert|edit)_\d+\.png$", re.IGNORECASE)
 
 
 class Frame(NamedTuple):

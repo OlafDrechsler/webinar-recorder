@@ -53,7 +53,7 @@ _DEFAULT_TEXT_SIZE = 28
 
 PALETTE = [
     ("Gelb", QColor(255, 235, 0)),
-    ("Rosa", QColor(255, 105, 180)),
+    ("Rot", QColor(230, 0, 0)),
     ("Blau", QColor(0, 120, 255)),
     ("Grün", QColor(0, 170, 0)),
     ("Schwarz", QColor(0, 0, 0)),
@@ -325,6 +325,7 @@ class AnnotationCanvas(QWidget):
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(30, 30, 30))
         rect = self._display_rect()
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)  # no pixelation when scaled
         painter.drawPixmap(rect, self._base)
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
@@ -464,16 +465,27 @@ class WorkAreaWindow(QWidget):
         container = QWidget()
         v = QVBoxLayout(container)
         v.setContentsMargins(8, 6, 8, 6)
-        header = QLabel(f"Schriftgröße: {self._canvas.text_size} px")
+        header = QLabel()
         slider = QSlider(Qt.Horizontal)
         slider.setRange(10, 96)
         slider.setValue(self._canvas.text_size)
-        slider.valueChanged.connect(
-            lambda val: (self._canvas.set_text_size(val),
-                         header.setText(f"Schriftgröße: {val} px"))
-        )
+        # Yellow "Lorem ipsum" sample at the chosen size (consistent with Gelb).
+        sample = QLabel("Lorem ipsum")
+        sample.setStyleSheet("color: rgb(255,235,0);")
+        sample.setMaximumWidth(280)
+
+        def on_size(val: int) -> None:
+            self._canvas.set_text_size(val)
+            header.setText(f"Schriftgröße: {val} px")
+            f = sample.font()
+            f.setPixelSize(val)
+            sample.setFont(f)
+
+        slider.valueChanged.connect(on_size)
+        on_size(slider.value())
         v.addWidget(header)
         v.addWidget(slider)
+        v.addWidget(sample)
         wa = QWidgetAction(menu)
         wa.setDefaultWidget(container)
         menu.addAction(wa)

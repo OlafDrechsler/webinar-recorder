@@ -16,6 +16,11 @@ def test_marked_flag_set():
     assert frames == [Frame(137, "00137_markiert_02.png", True)]
 
 
+def test_edit_frames_recognised():
+    frames = build_filmstrip(["00050_edit_01.png"])
+    assert frames == [Frame(50, "00050_edit_01.png", True)]
+
+
 def test_ignores_non_slides():
     assert build_filmstrip(["mikro_00005.wav", "_aussortiert", "x.png"]) == []
 
