@@ -54,14 +54,7 @@ from core.playback import SEEK_STEP_MS, seek_target, speed_percent_values
 from core.settings import get_data_dir, get_player_volumes, set_player_volumes
 from core.slide_timeline import slide_for_second
 from gui.branding import APP_NAME, app_icon
-from gui.icons import (
-    forward_icon,
-    pause_icon,
-    play_icon,
-    rewind_icon,
-    skip_back_icon,
-    skip_forward_icon,
-)
+from gui.icons import pause_icon, play_icon, skip_back_icon, skip_forward_icon
 from gui.work_area import WorkAreaWindow
 
 _DRIFT_MS = 350          # re-sync a mic segment if it drifts more than this
@@ -148,6 +141,8 @@ class SlideLabel(QLabel):
     clicked = Signal()
     seek_back = Signal()
     seek_forward = Signal()
+    hold_start = Signal()   # mouse held down -> fast preview
+    hold_end = Signal()
 
     def __init__(self) -> None:
         super().__init__("Kein Ordner geladen")
@@ -158,6 +153,11 @@ class SlideLabel(QLabel):
         self._single.setSingleShot(True)
         self._single.setInterval(max(200, QApplication.doubleClickInterval()))
         self._single.timeout.connect(self.clicked.emit)
+        self._hold = QTimer(self)
+        self._hold.setSingleShot(True)
+        self._hold.setInterval(220)
+        self._hold.timeout.connect(self._begin_hold)
+        self._holding = False
         self._full: QPixmap | None = None
         self.overlay: ControlsOverlay | None = None
 
@@ -181,11 +181,26 @@ class SlideLabel(QLabel):
         if self.overlay is not None:
             self.overlay.setGeometry(self.rect())
 
+    def _begin_hold(self) -> None:
+        self._holding = True
+        self.hold_start.emit()
+
     def mousePressEvent(self, event) -> None:  # noqa: N802
-        self._single.start()  # cancelled by a following double click
+        self._single.stop()
+        self._hold.start()  # if still down after the interval -> fast preview
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        self._hold.stop()
+        if self._holding:
+            self._holding = False
+            self.hold_end.emit()
+        else:
+            self._single.start()  # a tap: disambiguate from a double click
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
         self._single.stop()
+        self._hold.stop()
+        self._holding = False
         if event.position().x() < self.width() / 2:
             self.seek_back.emit()
         else:
@@ -377,6 +392,10 @@ class Player(QWidget):
         self._slide.clicked.connect(self._on_image_click)
         self._slide.seek_back.connect(lambda: self._seek_relative(-SEEK_STEP_MS))
         self._slide.seek_forward.connect(lambda: self._seek_relative(SEEK_STEP_MS))
+        self._slide.hold_start.connect(self._hold_start)
+        self._slide.hold_end.connect(self._hold_end)
+        self._hold_prev_rate = 1.0
+        self._hold_prev_playing = False
         self._overlay.background_clicked.connect(self._on_image_click)
         self._overlay.back.connect(lambda: self._seek_relative(-SEEK_STEP_MS))
         self._overlay.forward.connect(lambda: self._seek_relative(SEEK_STEP_MS))
@@ -394,19 +413,19 @@ class Player(QWidget):
 
         # --- transport ---
         self._back_btn = QPushButton()
-        self._back_btn.setIcon(rewind_icon(22))
+        self._back_btn.setIcon(skip_back_icon(26))      # circular "10" arrow, like the overlay
         self._back_btn.setToolTip("10 s zurück")
         self._back_btn.clicked.connect(lambda: self._seek_relative(-SEEK_STEP_MS))
         self._play_btn = QPushButton()
         self._play_btn.setIcon(play_icon(22))
         self._play_btn.clicked.connect(self._toggle_play)
         self._fwd_btn = QPushButton()
-        self._fwd_btn.setIcon(forward_icon(22))
+        self._fwd_btn.setIcon(skip_forward_icon(26))
         self._fwd_btn.setToolTip("10 s vor")
         self._fwd_btn.clicked.connect(lambda: self._seek_relative(SEEK_STEP_MS))
         for b in (self._back_btn, self._play_btn, self._fwd_btn):
             b.setStyleSheet(_TRANSPORT_BTN)
-            b.setIconSize(QSize(22, 22))
+            b.setIconSize(QSize(26, 26))
 
         self._slider = QSlider(Qt.Horizontal)
         self._slider.sliderMoved.connect(self._seek)
@@ -417,8 +436,8 @@ class Player(QWidget):
         self._speed.setCurrentText("100 %")
         self._speed.currentIndexChanged.connect(self._on_speed)
 
-        self._note_btn = QPushButton("✎ Notiz")
-        self._note_btn.setStyleSheet(_TRANSPORT_BTN)
+        self._note_btn = QPushButton("Notiz")
+        self._note_btn.setStyleSheet(_TRANSPORT_BTN + "QPushButton{color:white;}")
         self._note_btn.setToolTip("Aktuelle Folie pausieren und annotieren (wird im Filmstreifen abgelegt)")
         self._note_btn.clicked.connect(self._open_editor)
 
@@ -666,11 +685,27 @@ class Player(QWidget):
         self._seek(target)
         self._overlay_timer.start(_OVERLAY_MS)  # keep overlay visible while skipping
 
+    def _apply_rate(self, rate: float) -> None:
+        self._system.setPlaybackRate(rate)
+        for seg in self._segments:
+            seg.player.setPlaybackRate(rate)
+
     def _on_speed(self) -> None:
         self._rate = self._speed.currentData() / 100.0
-        self._system.setPlaybackRate(self._rate)
-        for seg in self._segments:
-            seg.player.setPlaybackRate(self._rate)
+        self._apply_rate(self._rate)
+
+    # ----- press-and-hold fast preview (2x) -----
+    def _hold_start(self) -> None:
+        self._hold_prev_rate = self._rate
+        self._hold_prev_playing = self._is_playing()
+        if not self._is_playing():
+            self._toggle_play()
+        self._apply_rate(2.0)
+
+    def _hold_end(self) -> None:
+        self._apply_rate(self._hold_prev_rate)
+        if not self._hold_prev_playing and self._is_playing():
+            self._toggle_play()
 
     def _on_duration(self, ms: int) -> None:
         self._slider.setRange(0, ms)
@@ -679,6 +714,7 @@ class Player(QWidget):
         if not self._slider.isSliderDown():
             self._slider.setValue(ms)
         self._time.setText(f"{_fmt(ms)} / {_fmt(self._system.duration())}")
+        self._time.setToolTip(f"{ms // 1000} s")  # current time in seconds
         self._update_slide(ms // 1000)
         self._sync_segments(ms)
 
