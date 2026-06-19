@@ -50,7 +50,7 @@ from core.filmstrip import build_filmstrip, visible_slots
 from core.mic_playback import parse_segment_start, segment_local_offset
 from core.playback import SEEK_STEP_MS, seek_target, speed_percent_values
 from core.settings import get_data_dir, get_player_volumes, set_player_volumes
-from core.slide_timeline import build_timeline, slide_for_second
+from core.slide_timeline import slide_for_second
 from gui.branding import APP_NAME, app_icon
 from gui.work_area import WorkAreaWindow
 
@@ -460,8 +460,11 @@ class Player(QWidget):
 
         self._slides_dir = session / "folien"
         names = [p.name for p in self._slides_dir.glob("*.png")] if self._slides_dir.is_dir() else []
-        self._timeline = build_timeline(names)
         self._frames = build_filmstrip(names)
+        # Timeline includes the annotated frames too, so a note is shown as the
+        # big image when playback reaches its second (it sorts after the auto
+        # frame of the same second, so the note takes precedence there).
+        self._timeline = [(f.second, f.name) for f in self._frames]
         self._index_of = {f.name: i for i, f in enumerate(self._frames)}
         self._current_slide = None
 
@@ -533,16 +536,20 @@ class Player(QWidget):
             return
         self._editor = WorkAreaWindow(frame, second, self._slides_dir)
         self._editor.setWindowIcon(app_icon())
-        self._editor.saved.connect(lambda _name: self._refresh_frames())
+        self._editor.saved.connect(self._on_note_saved)
         self._editor.show()
+
+    def _on_note_saved(self, name: str) -> None:
+        self._refresh_frames()
+        self.show_slide(name)  # show the freshly saved note as the big image
 
     def _refresh_frames(self) -> None:
         """Rebuild timeline + film strip after a note was saved, keeping position."""
         if self._slides_dir is None:
             return
         names = [p.name for p in self._slides_dir.glob("*.png")]
-        self._timeline = build_timeline(names)
         self._frames = build_filmstrip(names)
+        self._timeline = [(f.second, f.name) for f in self._frames]
         self._index_of = {f.name: i for i, f in enumerate(self._frames)}
         self._filmstrip.set_session(self._slides_dir, self._frames)
         if self._current_slide in self._index_of:
