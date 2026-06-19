@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QPoint, QRect, Qt, QTimer
+from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -200,6 +200,8 @@ class AnnotationCanvas(QWidget):
 
 
 class WorkAreaWindow(QWidget):
+    saved = Signal(str)  # emitted with the saved filename (for the player to refresh)
+
     def __init__(self, frame: np.ndarray, seconds: int, slides_dir: Path) -> None:
         super().__init__()
         self.setWindowTitle(f"Arbeitsbereich – Sekunde {seconds}")
@@ -279,4 +281,5 @@ class WorkAreaWindow(QWidget):
         existing = [p.name for p in self._slides_dir.glob("*.png")]
         name = marked_frame_name(self._seconds, existing)
         self._canvas.flattened().save(str(self._slides_dir / name), "PNG")
+        self.saved.emit(name)
         self.close()

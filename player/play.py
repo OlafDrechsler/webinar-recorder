@@ -24,6 +24,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import numpy as np
+from PIL import Image
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PySide6.QtCore import QSize, QTimer, QUrl, Qt, Signal
@@ -49,6 +52,7 @@ from core.playback import SEEK_STEP_MS, seek_target, speed_percent_values
 from core.settings import get_data_dir, get_player_volumes, set_player_volumes
 from core.slide_timeline import build_timeline, slide_for_second
 from gui.branding import APP_NAME, app_icon
+from gui.work_area import WorkAreaWindow
 
 _DRIFT_MS = 350          # re-sync a mic segment if it drifts more than this
 _OVERLAY_MS = 1800       # auto-hide the controls overlay after this
@@ -325,6 +329,7 @@ class Player(QWidget):
         self._index_of: dict[str, int] = {}
         self._current_slide: str | None = None
         self._segments: list[MicSegment] = []
+        self._editor: WorkAreaWindow | None = None
 
         # Master = system audio (persists across folder switches).
         self._system = QMediaPlayer()
@@ -384,6 +389,11 @@ class Player(QWidget):
         self._speed.setCurrentText("100 %")
         self._speed.currentIndexChanged.connect(self._on_speed)
 
+        self._note_btn = QPushButton("✎ Notiz")
+        self._note_btn.setStyleSheet(_TRANSPORT_BTN)
+        self._note_btn.setToolTip("Aktuelle Folie pausieren und annotieren (wird im Filmstreifen abgelegt)")
+        self._note_btn.clicked.connect(self._open_editor)
+
         controls = QHBoxLayout()
         controls.addWidget(self._back_btn)
         controls.addWidget(self._play_btn)
@@ -392,6 +402,7 @@ class Player(QWidget):
         controls.addWidget(self._time)
         controls.addWidget(QLabel("Tempo:"))
         controls.addWidget(self._speed)
+        controls.addWidget(self._note_btn)
 
         # --- volume ---
         self._sys_vol = QSlider(Qt.Horizontal)
@@ -506,6 +517,36 @@ class Player(QWidget):
         frame = self._frames[index]
         self.show_slide(frame.name)
         self._seek(frame.second * 1000)
+
+    # ----- annotate while watching -----
+    def _open_editor(self) -> None:
+        """Pause and open the annotation editor on the current slide; the note is
+        tagged with the current playback second and saved into the folien folder."""
+        if self._slides_dir is None or self._current_slide is None:
+            return
+        if self._is_playing():
+            self._toggle_play()
+        second = int(self._system.position() // 1000)
+        try:
+            frame = np.asarray(Image.open(self._slides_dir / self._current_slide).convert("RGB"))
+        except OSError:
+            return
+        self._editor = WorkAreaWindow(frame, second, self._slides_dir)
+        self._editor.setWindowIcon(app_icon())
+        self._editor.saved.connect(lambda _name: self._refresh_frames())
+        self._editor.show()
+
+    def _refresh_frames(self) -> None:
+        """Rebuild timeline + film strip after a note was saved, keeping position."""
+        if self._slides_dir is None:
+            return
+        names = [p.name for p in self._slides_dir.glob("*.png")]
+        self._timeline = build_timeline(names)
+        self._frames = build_filmstrip(names)
+        self._index_of = {f.name: i for i, f in enumerate(self._frames)}
+        self._filmstrip.set_session(self._slides_dir, self._frames)
+        if self._current_slide in self._index_of:
+            self._filmstrip.set_current(self._index_of[self._current_slide])
 
     # ----- transport -----
     def _is_playing(self) -> bool:
