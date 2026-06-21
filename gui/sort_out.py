@@ -470,19 +470,28 @@ class SortOutWindow(QWidget):
         self._status.setText(f"{done} Verbleibend: {len(self._paths)}.")
 
 
-def main() -> int:
-    app = QApplication(sys.argv)
-    app.setWindowIcon(app_icon())
-    if len(sys.argv) > 1:
-        folder = Path(sys.argv[1])
-    else:
-        start = str(get_data_dir())
-        chosen = QFileDialog.getExistingDirectory(None, "Folienordner wählen", start)
+def open_sorter(folder: Path | None = None) -> SortOutWindow | None:
+    """Show the folder picker (unless given) and open the sort-out window."""
+    if folder is None:
+        chosen = QFileDialog.getExistingDirectory(None, "Folienordner wählen", str(get_data_dir()))
         if not chosen:
-            return 0
+            return None
         folder = Path(chosen)
     win = SortOutWindow(folder)
+    win.setWindowIcon(app_icon())
     win.show()
+    return win
+
+
+def main() -> int:
+    from core.i18n import init_language
+
+    app = QApplication(sys.argv)
+    app.setWindowIcon(app_icon())
+    init_language()
+    folder = Path(sys.argv[1]) if len(sys.argv) > 1 else None
+    if open_sorter(folder) is None:
+        return 0
     return app.exec()
 
 

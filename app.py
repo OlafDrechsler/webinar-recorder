@@ -70,61 +70,58 @@ def _choose_session(app: QApplication) -> Path | None:
             )
 
 
-def main() -> int:
-    # Use the exact (possibly fractional) display scale so devicePixelRatioF
-    # reports e.g. 1.5 on a 150% display — required for the region selector to
-    # map its logical rectangle to physical pixels correctly. Must be set before
-    # the QApplication is created.
-    QApplication.setHighDpiScaleFactorRoundingPolicy(
-        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
-    )
-    app = QApplication(sys.argv)
-    app.setWindowIcon(app_icon())
-    app.setQuitOnLastWindowClosed(False)
+def launch_recording() -> ControlWindow | None:
+    """Run the storage dialog, create the recorders and show the control window.
 
-    session = _choose_session(app)
+    The (threaded) loudness-match + MP3 transcode runs automatically when the
+    window is closed. Usable from the hub (no QApplication ownership). Returns the
+    control window, or None if the storage dialog was cancelled.
+    """
+    session = _choose_session(None)
     if session is None:
-        return 0
+        return None
     slides_dir = session / "folien"
     mic_dir = session / "mikro"
     system_wav = session / "system.wav"
 
     # Recorders are created but NOT started here: the control window opens first
     # so the user can position it and pick the slide region, then starts the
-    # recording explicitly. The shared start time t0 is set at that moment (inside
-    # the window) so audio and slide filenames line up on seconds-since-start.
+    # recording explicitly. The shared start time t0 is set at that moment.
     system = SystemAudioRecorder(system_wav)
     mic = SegmentedMicRecorder(mic_dir, 0.0, device_name=get_mic_device())
 
     window = ControlWindow(system, mic, slides_dir)
-    # WA_DeleteOnClose makes closing the window actually destroy it, so the
-    # destroyed signal fires and the event loop quits. Without this the window
-    # is only hidden (quitOnLastWindowClosed is off), app.exec() never returns,
-    # and the WAV->MP3 transcode below would never run.
     window.setAttribute(Qt.WA_DeleteOnClose, True)
-    window.destroyed.connect(app.quit)
+
+    def finish() -> None:
+        if (system_wav.exists() or mic.segments) and ffmpeg_available():
+            _run_postprocessing_with_progress(system_wav, mic.segments)
+        print(f"Aufnahme gespeichert in: {session} | Mikro-Segmente: {len(mic.segments)}")
+
+    window.destroyed.connect(finish)
     window.show()
-    app.exec()
+    return window
 
-    # If the user never started a recording, there is nothing to process.
-    if not system_wav.exists() and not mic.segments:
-        print("Keine Aufnahme erstellt.")
+
+def main() -> int:
+    from core.i18n import init_language
+
+    # Use the exact (possibly fractional) display scale so devicePixelRatioF
+    # reports e.g. 1.5 on a 150% display (needed for the region selector). Must be
+    # set before the QApplication is created.
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
+    app = QApplication(sys.argv)
+    app.setWindowIcon(app_icon())
+    app.setQuitOnLastWindowClosed(False)
+    init_language()
+
+    window = launch_recording()
+    if window is None:
         return 0
-
-    # Post-process audio (recorders already stopped in closeEvent): measure each
-    # source's loudness, then transcode to MP3 applying a clip-safe gain so the
-    # system track and the mic segments end up at a similar volume on playback.
-    # A small progress window keeps the user informed (this can take a while for
-    # long recordings); the FFmpeg calls themselves no longer flash any windows.
-    if ffmpeg_available():
-        _run_postprocessing_with_progress(system_wav, mic.segments)
-        fmt = "MP3 (lautstärke-angeglichen)"
-    else:
-        fmt = "WAV (FFmpeg nicht gefunden)"
-
-    print(f"Aufnahme gespeichert in: {session}")
-    print(f"Audioformat: {fmt} | Mikro-Segmente: {len(mic.segments)}")
-    return 0
+    window.destroyed.connect(app.quit)
+    return app.exec()
 
 
 def _normalize_and_transcode(system_wav: Path, mic_segments: list[Path], progress=None) -> None:

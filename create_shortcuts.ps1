@@ -67,19 +67,16 @@ function New-Shortcut {
 }
 
 $desktop = [Environment]::GetFolderPath("Desktop")
-$startMenu = Join-Path ([Environment]::GetFolderPath("Programs")) "Webinar Recorder"
+$startMenu = Join-Path ([Environment]::GetFolderPath("Programs")) "WebinarOD"
 New-Item -ItemType Directory -Force -Path $startMenu | Out-Null
 
 $quote = [char]34
-$appArg    = $quote + (Join-Path $here "app.py") + $quote
-$playerArg = $quote + (Join-Path $here "player\play.py") + $quote
-$sortArg   = $quote + (Join-Path $here "sortout.py") + $quote
+$hubArg = $quote + (Join-Path $here "hub.py") + $quote
 
+# A single, brand-named launcher (the hub) from which all three tools open.
 foreach ($dir in @($desktop, $startMenu)) {
-    New-Shortcut (Join-Path $dir "Webinar Aufnahme.lnk")  $appArg    "Webinar aufnehmen"
-    New-Shortcut (Join-Path $dir "Webinar Player.lnk")    $playerArg "Webinar-Aufnahme abspielen"
-    New-Shortcut (Join-Path $dir "Folien aussortieren.lnk") $sortArg "Doppelte Folienbilder aussortieren"
+    New-Shortcut (Join-Path $dir "WebinarOD.lnk") $hubArg "WebinarOD - Aufnahme, Player, Folien aussortieren"
 }
 
 Write-Host ""
-Write-Host "Fertig. Verknuepfungen liegen auf dem Desktop und im Startmenue (Ordner Webinar Recorder)." -ForegroundColor Green
+Write-Host "Fertig. Verknuepfung 'WebinarOD' liegt auf dem Desktop und im Startmenue." -ForegroundColor Green

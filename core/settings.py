@@ -26,6 +26,7 @@ _WORK_AREA_KEY = "work_area_geometry"
 _MIC_DEVICE_KEY = "mic_device"
 _PLAYER_VOL_KEY = "player_volumes"
 _SORTOUT_KEY = "sortout_config"
+_LANGUAGE_KEY = "language"
 
 
 def config_path() -> Path:
@@ -143,4 +144,16 @@ def set_sortout_config(config: dict) -> None:
     """Remember the slide-deduplication mask/threshold for next time."""
     settings = load_settings()
     settings[_SORTOUT_KEY] = config
+    save_settings(settings)
+
+
+def get_language() -> str | None:
+    """The saved UI language code (e.g. 'de', 'en'), or None if never chosen."""
+    value = load_settings().get(_LANGUAGE_KEY)
+    return value if isinstance(value, str) and value else None
+
+
+def set_language(code: str) -> None:
+    settings = load_settings()
+    settings[_LANGUAGE_KEY] = str(code)
     save_settings(settings)

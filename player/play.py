@@ -771,13 +771,23 @@ class Player(QWidget):
         set_player_volumes(self._sys_vol.value(), self._mic_vol.value())
 
 
-def main() -> int:
-    app = QApplication(sys.argv)
-    app.setWindowIcon(app_icon())
-    session = Path(sys.argv[1]) if len(sys.argv) > 1 else None
+def open_player(session: Path | None = None) -> Player:
+    """Create and show a player window (for the hub / in-process use)."""
     win = Player(session)
+    win.setWindowIcon(app_icon())
     win.resize(960, 760)
     win.show()
+    return win
+
+
+def main() -> int:
+    from core.i18n import init_language
+
+    app = QApplication(sys.argv)
+    app.setWindowIcon(app_icon())
+    init_language()
+    session = Path(sys.argv[1]) if len(sys.argv) > 1 else None
+    open_player(session)
     return app.exec()
 
 
