@@ -29,13 +29,14 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
-from PySide6.QtCore import QPoint, QRect, Qt, QTimer
-from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
+from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -96,15 +97,19 @@ class SortFilmstrip(QWidget):
     GAP = 8
     CAP_H = 16
 
+    frame_clicked = Signal(int)  # index into the frames list
+
     def __init__(self) -> None:
         super().__init__()
         self._frames: list[Path] = []
         self._history: list[int] = []   # kept baselines; last item = current baseline
         self._upcoming: list[int] = []  # not yet processed; [0] = next candidate
         self._discard_pending = False
+        self._center: int | None = None  # browse offset; None = follow the baseline
         self._cache: dict[str, QPixmap] = {}
         self.setFixedHeight(self.THUMB_H + self.CAP_H + 12)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.setCursor(Qt.PointingHandCursor)
 
     def set_session(self, frames: list[Path]) -> None:
         self._frames = list(frames)
@@ -112,6 +117,7 @@ class SortFilmstrip(QWidget):
         self._history = [0] if self._frames else []
         self._upcoming = list(range(1, len(self._frames)))
         self._discard_pending = False
+        self._center = None
         self.update()
 
     # ----- state -----
@@ -124,7 +130,21 @@ class SortFilmstrip(QWidget):
     def candidate_index(self) -> int | None:
         return self._upcoming[0] if self._upcoming else None
 
-    # ----- transitions -----
+    def _seq(self) -> list[int]:
+        return self._history + self._upcoming
+
+    def _effective_center(self) -> int:
+        if self._center is not None:
+            return self._center
+        return max(0, len(self._history) - 1)  # baseline position
+
+    def scroll(self, delta: int) -> None:
+        seq_len = len(self._history) + len(self._upcoming)
+        if seq_len:
+            self._center = max(0, min(seq_len - 1, self._effective_center() + delta))
+            self.update()
+
+    # ----- transitions (re-follow the baseline) -----
     def mark_discard(self) -> None:
         self._discard_pending = True
         self.update()
@@ -132,6 +152,7 @@ class SortFilmstrip(QWidget):
     def eject(self) -> int:
         idx = self._upcoming.pop(0)
         self._discard_pending = False
+        self._center = None
         self.update()
         return idx
 
@@ -139,7 +160,18 @@ class SortFilmstrip(QWidget):
         if self._upcoming:
             self._history.append(self._upcoming.pop(0))
             self._discard_pending = False
+            self._center = None
             self.update()
+
+    # ----- click -----
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        seq = self._seq()
+        if not seq:
+            return
+        step = self.THUMB_W + self.GAP
+        pos = self._effective_center() + round((event.position().x() - self.width() / 2) / step)
+        if 0 <= pos < len(seq):
+            self.frame_clicked.emit(seq[pos])
 
     # ----- rendering -----
     def _thumb(self, idx: int) -> QPixmap | None:
@@ -156,24 +188,25 @@ class SortFilmstrip(QWidget):
     def paintEvent(self, event) -> None:  # noqa: N802
         p = QPainter(self)
         p.fillRect(self.rect(), QColor(22, 22, 22))
-        if not self._frames or not self._history:
+        seq = self._seq()
+        if not seq:
             return
+        baseline_pos = len(self._history) - 1
+        candidate_pos = len(self._history) if self._upcoming else -1
+        center = self._effective_center()
         step = self.THUMB_W + self.GAP
         cx = self.width() / 2
         n_side = int((self.width() / 2) // step) + 1
-        # centre = current baseline
-        self._draw_cell(p, cx, self._history[-1], "baseline")
-        # history to the left
-        for k in range(1, n_side + 1):
-            hi = len(self._history) - 1 - k
-            if hi >= 0:
-                self._draw_cell(p, cx - k * step, self._history[hi], "hist")
-        # upcoming to the right; [0] is the candidate being compared
-        for k in range(1, n_side + 1):
-            ui = k - 1
-            if ui < len(self._upcoming):
-                border = ("discard" if self._discard_pending else "candidate") if ui == 0 else "up"
-                self._draw_cell(p, cx + k * step, self._upcoming[ui], border)
+        for pos in range(max(0, center - n_side), min(len(seq), center + n_side + 1)):
+            if pos == baseline_pos:
+                border = "baseline"
+            elif pos == candidate_pos:
+                border = "discard" if self._discard_pending else "candidate"
+            elif pos < baseline_pos:
+                border = "hist"
+            else:
+                border = "up"
+            self._draw_cell(p, cx + (pos - center) * step, seq[pos], border)
 
     def _draw_cell(self, p: QPainter, center_x: float, idx: int, border: str) -> None:
         x = int(center_x - self.THUMB_W / 2)
@@ -205,6 +238,8 @@ class SortFilmstrip(QWidget):
 
 class MaskCanvas(QWidget):
     """Shows a reference image and lets the user draw rectangle/ellipse regions."""
+
+    context_requested = Signal()  # right-click -> show the move/delete menu
 
     def __init__(self) -> None:
         super().__init__()
@@ -295,6 +330,9 @@ class MaskCanvas(QWidget):
 
     # ----- mouse -----
     def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.RightButton:
+            self.context_requested.emit()
+            return
         if self._base is None:
             return
         self._origin = self._to_image(event.position().toPoint())
@@ -342,6 +380,7 @@ class SortOutWindow(QWidget):
         folder_row.addWidget(self._folder_btn)
 
         self._canvas = MaskCanvas()
+        self._canvas.context_requested.connect(self._show_image_menu)
         self._ref_label = QLabel()
 
         # Reference-image stepping.
@@ -386,8 +425,25 @@ class SortOutWindow(QWidget):
         thr_row.addWidget(save_btn)
         thr_row.addWidget(load_btn)
 
-        # Animated film strip + run controls (visualises the dedup decisions).
+        # Animated film strip with paging arrows + run controls.
         self._filmstrip = SortFilmstrip()
+        self._filmstrip.frame_clicked.connect(self._on_strip_click)
+        strip_left = QPushButton("‹")
+        strip_left.setFixedWidth(28)
+        strip_left.setAutoRepeat(True)
+        strip_left.setAutoRepeatInterval(60)
+        strip_left.clicked.connect(lambda: self._filmstrip.scroll(-3))
+        strip_right = QPushButton("›")
+        strip_right.setFixedWidth(28)
+        strip_right.setAutoRepeat(True)
+        strip_right.setAutoRepeatInterval(60)
+        strip_right.clicked.connect(lambda: self._filmstrip.scroll(3))
+        strip_row = QHBoxLayout()
+        strip_row.setSpacing(4)
+        strip_row.addWidget(strip_left)
+        strip_row.addWidget(self._filmstrip, stretch=1)
+        strip_row.addWidget(strip_right)
+
         self._speed = QSlider(Qt.Horizontal)
         self._speed.setRange(0, 100)   # 0 = slow (2 s/step), 100 = fast (no delay)
         self._speed.setValue(0)
@@ -441,7 +497,7 @@ class SortOutWindow(QWidget):
         layout.addWidget(self._canvas, stretch=1)
         layout.addLayout(tools)
         layout.addLayout(thr_row)
-        layout.addWidget(self._filmstrip)
+        layout.addLayout(strip_row)
         layout.addLayout(run_row)
         layout.addLayout(action_row)
         layout.addWidget(self._status)
@@ -460,7 +516,12 @@ class SortOutWindow(QWidget):
             self._load_folder(Path(chosen))
 
     def _load_folder(self, folder: Path) -> None:
-        self._folder = Path(folder)
+        folder = Path(folder)
+        # Accept a parent webinar folder (any name): if it has no slide PNGs
+        # directly but a "folien" subfolder does, use that.
+        if not auto_frames(folder) and (folder / "folien").is_dir() and auto_frames(folder / "folien"):
+            folder = folder / "folien"
+        self._folder = folder
         self._paths = auto_frames(self._folder)
         self._ref_index = 0
         self._path_lbl.setText(self._folder.name)
@@ -472,6 +533,29 @@ class SortOutWindow(QWidget):
         self._status.setText(tr("sort.no_slides") if not self._paths else "")
 
     # ----- reference image -----
+    def _on_strip_click(self, frame_index: int) -> None:
+        """Show the clicked film-strip image in the big (reference) view."""
+        if 0 <= frame_index < len(self._paths):
+            self._ref_index = frame_index
+            self._refresh_ref()
+
+    def _show_image_menu(self) -> None:
+        """Right-click on the big image: move or delete (runs with that action)."""
+        if self._running or not self._paths:
+            return
+        menu = QMenu(self)
+        act_move = menu.addAction(tr("sort.menu_move"))
+        act_del = menu.addAction(tr("sort.menu_delete"))
+        chosen = menu.exec(QCursor.pos())
+        if chosen == act_move:
+            self._action = "move"
+            self._refresh_mode_labels()
+            self._run()
+        elif chosen == act_del:
+            self._action = "delete"
+            self._refresh_mode_labels()
+            self._run()
+
     def _step_ref(self, delta: int) -> None:
         if not self._paths:
             return
