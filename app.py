@@ -4,101 +4,46 @@ Continuous system audio + voice-activated microphone segments, plus a 1 Hz
 screenshot of a chosen region that is saved only when the slide changes.
 
 Flow:
-1. A storage dialog asks where to save (pre-filled with last time's folder,
-   persisted via core.settings — typically a OneDrive folder).
-2. One session folder ``Webinar_<date>`` is created under the chosen location.
-3. The control window opens WITHOUT recording yet, so the user can move it aside
-   and pick the slide region.
-4. The user clicks "Aufnahme starten" — only now do audio and screenshots begin.
-   Clicking the same button again ("Aufnahme beenden") stops and finishes.
+1. The control window opens immediately with the storage folder shown in its
+   header (pre-filled from settings; changeable there — like the player).
+2. The user positions the window and picks the slide region.
+3. The user clicks "Aufnahme starten" — only now is the session folder created
+   and audio + screenshots begin. Clicking again ("Aufnahme beenden") stops and
+   then loudness-matches + transcodes to MP3.
 
-Run:  python app.py     (or use the desktop shortcut created by install.ps1)
+Run:  python app.py     (or use the WebinarOD launcher created by install.ps1)
 """
 
 from __future__ import annotations
 
-import datetime as _dt
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from PySide6.QtCore import QEventLoop, QObject, QThread, Qt, Signal
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QProgressDialog
+from PySide6.QtWidgets import QApplication, QProgressDialog
 
 from core.i18n import tr
 from core.loudness import aggregate_mean_db, compute_gain_db
 from core.settings import get_mic_device
 from gui.branding import app_icon
 from gui.control_window import ControlWindow
-from gui.storage_dialog import StorageDialog
-from io_adapters.audio import SegmentedMicRecorder, SystemAudioRecorder
 from io_adapters.encode import ffmpeg_available, measure_loudness, transcode_to_mp3
 
 
-def _session_dir(base: Path) -> Path:
-    """Create and return ``<base>/Webinar_<date>`` with its subfolders.
+def launch_recording() -> ControlWindow:
+    """Create and show the recording control window (storage folder is chosen in
+    its header). The loudness-match + MP3 transcode runs when the window closes.
+    Usable from the hub (no QApplication ownership)."""
 
-    Raises OSError if ``base`` cannot be written to (handled by the caller, which
-    re-opens the storage dialog).
-    """
-    stamp = _dt.datetime.now().strftime("%Y-%m-%d_%H-%M")
-    session = Path(base) / f"Webinar_{stamp}"
-    (session / "folien").mkdir(parents=True, exist_ok=True)
-    (session / "mikro").mkdir(parents=True, exist_ok=True)
-    return session
+    def on_process(system_wav: Path, segments: list[Path]) -> None:
+        if ffmpeg_available():
+            _run_postprocessing_with_progress(system_wav, segments)
+        print(f"Aufnahme gespeichert: {system_wav.parent} | Mikro-Segmente: {len(segments)}")
 
-
-def _choose_session(app: QApplication) -> Path | None:
-    """Show the storage dialog and build the session folder.
-
-    Loops if the chosen folder can't be created (e.g. no permission), so the user
-    can pick another. Returns the session path, or None if the user cancelled.
-    """
-    while True:
-        dialog = StorageDialog()
-        if dialog.exec() != QDialog.Accepted:
-            return None
-        base = dialog.chosen_path()
-        try:
-            return _session_dir(base)
-        except OSError as exc:
-            QMessageBox.warning(
-                None,
-                tr("storage.error_title"),
-                tr("storage.error_body", path=base, error=exc),
-            )
-
-
-def launch_recording() -> ControlWindow | None:
-    """Run the storage dialog, create the recorders and show the control window.
-
-    The (threaded) loudness-match + MP3 transcode runs automatically when the
-    window is closed. Usable from the hub (no QApplication ownership). Returns the
-    control window, or None if the storage dialog was cancelled.
-    """
-    session = _choose_session(None)
-    if session is None:
-        return None
-    slides_dir = session / "folien"
-    mic_dir = session / "mikro"
-    system_wav = session / "system.wav"
-
-    # Recorders are created but NOT started here: the control window opens first
-    # so the user can position it and pick the slide region, then starts the
-    # recording explicitly. The shared start time t0 is set at that moment.
-    system = SystemAudioRecorder(system_wav)
-    mic = SegmentedMicRecorder(mic_dir, 0.0, device_name=get_mic_device())
-
-    window = ControlWindow(system, mic, slides_dir)
+    window = ControlWindow(get_mic_device(), on_process)
     window.setAttribute(Qt.WA_DeleteOnClose, True)
-
-    def finish() -> None:
-        if (system_wav.exists() or mic.segments) and ffmpeg_available():
-            _run_postprocessing_with_progress(system_wav, mic.segments)
-        print(f"Aufnahme gespeichert in: {session} | Mikro-Segmente: {len(mic.segments)}")
-
-    window.destroyed.connect(finish)
     window.show()
     return window
 
@@ -118,8 +63,6 @@ def main() -> int:
     init_language()
 
     window = launch_recording()
-    if window is None:
-        return 0
     window.destroyed.connect(app.quit)
     return app.exec()
 

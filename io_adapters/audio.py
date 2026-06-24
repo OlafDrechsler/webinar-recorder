@@ -209,6 +209,10 @@ class SegmentedMicRecorder:
         """Set recording mode: 'on' (always), 'off' (muted), or 'auto' (VAD)."""
         self._mode = mode
 
+    def set_out_dir(self, out_dir) -> None:
+        """Where segment files are written (set before enable_recording)."""
+        self._dir = Path(out_dir)
+
     def set_override(self, on: bool) -> None:
         # Backwards-compatible shim: True forces recording, False returns to auto.
         self._mode = "on" if on else "auto"

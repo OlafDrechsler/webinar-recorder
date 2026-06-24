@@ -34,3 +34,22 @@ def test_missing_language_falls_back_to_english():
 
 def test_all_languages_listed():
     assert set(i18n.LANGUAGES) == {"de", "en", "fr", "es", "it", "pt", "nl", "pl", "tr"}
+
+
+def test_every_key_translated_in_every_language():
+    missing = [
+        f"{key}:{lang}"
+        for key, entry in i18n.TRANSLATIONS.items()
+        for lang in i18n.LANGUAGES
+        if not entry.get(lang)
+    ]
+    assert missing == [], f"missing translations: {missing}"
+
+
+def test_format_placeholders_consistent_across_languages():
+    # Keys with {placeholders} must keep them in every language.
+    import re
+    for key, entry in i18n.TRANSLATIONS.items():
+        de_fields = set(re.findall(r"\{(\w+)", entry["de"]))
+        for lang in i18n.LANGUAGES:
+            assert set(re.findall(r"\{(\w+)", entry[lang])) == de_fields, f"{key}:{lang}"

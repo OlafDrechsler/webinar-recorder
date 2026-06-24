@@ -200,15 +200,27 @@ class MaskCanvas(QWidget):
 
 
 class SortOutWindow(QWidget):
-    def __init__(self, folder: Path) -> None:
+    def __init__(self, folder: Path | None = None) -> None:
         super().__init__()
-        self._folder = Path(folder)
-        self._paths = auto_frames(self._folder)
+        self._folder: Path | None = None
+        self._paths: list[Path] = []
         self._ref_index = 0
         self._mask_mode = IGNORE
         self._action = "move"  # "move" or "delete"
-        self.setWindowTitle(f"{APP_NAME} – {tr('hub.sort')} – {self._folder.name}")
+        self.setWindowTitle(f"{APP_NAME} – {tr('hub.sort')}")
         self.setWindowIcon(app_icon())
+
+        # Folder picker in the header (like the player) — no separate dialog window.
+        self._path_lbl = QLabel(tr("player.no_folder_loaded"))
+        self._path_lbl.setStyleSheet("color:#888;")
+        self._path_lbl.setMinimumWidth(0)
+        self._path_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        folder_btn = QPushButton(tr("player.choose_folder_btn"))
+        folder_btn.clicked.connect(self._choose_folder)
+        folder_row = QHBoxLayout()
+        folder_row.addWidget(QLabel(tr("player.folder_label")))
+        folder_row.addWidget(self._path_lbl, stretch=1)
+        folder_row.addWidget(folder_btn)
 
         self._canvas = MaskCanvas()
         self._ref_label = QLabel()
@@ -272,20 +284,37 @@ class SortOutWindow(QWidget):
         self._status = QLabel()
 
         layout = QVBoxLayout(self)
+        layout.addLayout(folder_row)
         layout.addLayout(ref_row)
         layout.addWidget(self._canvas, stretch=1)
         layout.addLayout(tools)
         layout.addLayout(thr_row)
         layout.addLayout(action_row)
         layout.addWidget(self._status)
-        self.resize(900, 720)
+        self.resize(900, 760)
 
-        self._apply_saved_config()
-        self._refresh_ref()
         self._update_thr_label(self._thr.value())
         self._refresh_mode_labels()
-        if not self._paths:
-            self._status.setText(tr("sort.no_slides"))
+        if folder is not None:
+            self._load_folder(folder)
+
+    # ----- folder selection (in-window) -----
+    def _choose_folder(self) -> None:
+        start = str(self._folder.parent if self._folder else get_data_dir())
+        chosen = QFileDialog.getExistingDirectory(self, tr("sort.choose_folder"), start)
+        if chosen:
+            self._load_folder(Path(chosen))
+
+    def _load_folder(self, folder: Path) -> None:
+        self._folder = Path(folder)
+        self._paths = auto_frames(self._folder)
+        self._ref_index = 0
+        self._path_lbl.setText(self._folder.name)
+        self._path_lbl.setToolTip(str(self._folder))
+        self.setWindowTitle(f"{APP_NAME} – {tr('hub.sort')} – {self._folder.name}")
+        self._apply_saved_config()
+        self._refresh_ref()
+        self._status.setText(tr("sort.no_slides") if not self._paths else "")
 
     # ----- reference image -----
     def _step_ref(self, delta: int) -> None:
@@ -469,13 +498,8 @@ class SortOutWindow(QWidget):
         self._status.setText(tr("sort.remaining", done=done, n=len(self._paths)))
 
 
-def open_sorter(folder: Path | None = None) -> SortOutWindow | None:
-    """Show the folder picker (unless given) and open the sort-out window."""
-    if folder is None:
-        chosen = QFileDialog.getExistingDirectory(None, tr("sort.choose_folder"), str(get_data_dir()))
-        if not chosen:
-            return None
-        folder = Path(chosen)
+def open_sorter(folder: Path | None = None) -> SortOutWindow:
+    """Open the sort-out window; the folder is chosen inside the window."""
     win = SortOutWindow(folder)
     win.setWindowIcon(app_icon())
     win.show()
@@ -489,8 +513,7 @@ def main() -> int:
     app.setWindowIcon(app_icon())
     init_language()
     folder = Path(sys.argv[1]) if len(sys.argv) > 1 else None
-    if open_sorter(folder) is None:
-        return 0
+    open_sorter(folder)
     return app.exec()
 
 

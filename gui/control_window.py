@@ -21,16 +21,19 @@ changed slides are saved.
 
 from __future__ import annotations
 
+import datetime as _dt
 import time
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QRadioButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -38,10 +41,12 @@ from PySide6.QtWidgets import (
 from core.capture_state import CaptureState
 from core.i18n import tr
 from core.naming import auto_frame_name
+from core.settings import get_data_dir, set_data_dir
 from gui.branding import APP_NAME, app_icon
 from gui.mic_test import MicLevelWindow
 from gui.region_selector import select_region
 from gui.work_area import WorkAreaWindow
+from io_adapters.audio import SegmentedMicRecorder, SystemAudioRecorder
 from io_adapters.screen import Region, ScreenCapturer
 
 
@@ -67,7 +72,7 @@ class _Hotkeys(QObject):
 
 
 class ControlWindow(QWidget):
-    def __init__(self, system_recorder, mic_recorder, slides_dir: Path) -> None:
+    def __init__(self, mic_device: str | None, on_process) -> None:
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} – {tr('hub.record')}")
         self.setWindowIcon(app_icon())
@@ -75,11 +80,17 @@ class ControlWindow(QWidget):
         # the taskbar and can be reached with Alt+Tab.
         self.setWindowFlags(Qt.WindowStaysOnTopHint)
 
-        self._system = system_recorder
-        self._mic = mic_recorder
+        # Storage base + recorders are owned here. The session folder and the
+        # system recorder are created when recording starts; the mic recorder runs
+        # in monitor mode beforehand (for the level test).
+        self._base = get_data_dir()
+        self._on_process = on_process  # called(system_wav, segments) after stop
+        self._system: SystemAudioRecorder | None = None
+        self._mic = SegmentedMicRecorder(self._base, 0.0, device_name=mic_device)
+        self._system_wav: Path | None = None
+        self._slides_dir: Path | None = None
         self._start: float | None = None  # set when recording starts
         self._recording = False
-        self._slides_dir = Path(slides_dir)
         self._capturer = ScreenCapturer()
         self._state = CaptureState()
         self._region: Region | None = None
@@ -89,6 +100,19 @@ class ControlWindow(QWidget):
         self._mic_test: MicLevelWindow | None = None
 
         # --- UI ---
+        # Folder picker in the header (like the player) — no separate dialog.
+        self._path_lbl = QLabel(self._base.name)
+        self._path_lbl.setToolTip(str(self._base))
+        self._path_lbl.setStyleSheet("color:#888;")
+        self._path_lbl.setMinimumWidth(0)
+        self._path_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._folder_btn = QPushButton(tr("player.choose_folder_btn"))
+        self._folder_btn.clicked.connect(self._choose_folder)
+        folder_row = QHBoxLayout()
+        folder_row.addWidget(QLabel(tr("record.storage_label")))
+        folder_row.addWidget(self._path_lbl, stretch=1)
+        folder_row.addWidget(self._folder_btn)
+
         # The main start/stop toggle sits on top and is visually prominent.
         self._record_btn = QPushButton(tr("record.start"))
         self._record_btn.setStyleSheet("font-weight: bold; padding: 6px;")
@@ -131,6 +155,7 @@ class ControlWindow(QWidget):
         row3.addWidget(mic_test_btn)
 
         layout = QVBoxLayout(self)
+        layout.addLayout(folder_row)
         layout.addWidget(self._record_btn)
         layout.addLayout(row1)
         layout.addLayout(row2)
@@ -162,22 +187,44 @@ class ControlWindow(QWidget):
         self._status_timer.timeout.connect(self._refresh_labels)
         self._status_timer.start(500)
 
+    # ----- folder selection (in-window) -----
+    def _choose_folder(self) -> None:
+        if self._recording:
+            return  # don't move the target mid-recording
+        chosen = QFileDialog.getExistingDirectory(self, tr("storage.choose_folder"), str(self._base))
+        if chosen:
+            self._base = Path(chosen)
+            set_data_dir(self._base)
+            self._path_lbl.setText(self._base.name)
+            self._path_lbl.setToolTip(str(self._base))
+
     # ----- recording start/stop -----
     def _toggle_recording(self) -> None:
         if not self._recording:
             self._start_recording()
         else:
-            self.close()  # closeEvent stops recorders; app then transcodes
+            self.close()  # closeEvent stops recorders and runs post-processing
 
     def _start_recording(self) -> None:
-        # t0 is set here (not at app start) so audio and slide filenames share
-        # the same seconds-since-start origin. The mic is likely already running
-        # in monitor mode; enable_recording flips it to writing without a gap.
+        # Create the session folder under the chosen base now, then start. t0 is
+        # set here so audio and slide filenames share the same origin; the mic is
+        # already monitoring, enable_recording flips it to writing without a gap.
+        stamp = _dt.datetime.now().strftime("%Y-%m-%d_%H-%M")
+        session = self._base / f"Webinar_{stamp}"
+        self._slides_dir = session / "folien"
+        mic_dir = session / "mikro"
+        self._slides_dir.mkdir(parents=True, exist_ok=True)
+        mic_dir.mkdir(parents=True, exist_ok=True)
+        self._system_wav = session / "system.wav"
+
+        self._system = SystemAudioRecorder(self._system_wav)
+        self._mic.set_out_dir(mic_dir)
         self._start = time.monotonic()
         self._system.start()
         self._mic.enable_recording(self._start)
         self._recording = True
         self._record_btn.setText(tr("record.stop"))
+        self._folder_btn.setEnabled(False)  # locked once recording
         self._refresh_labels()
 
     # ----- toggles -----
@@ -201,7 +248,7 @@ class ControlWindow(QWidget):
             f"{tr('record.photo')}: {tr('common.on') if self._photo_on else tr('common.off')}"
         )
         hk = tr("record.hotkeys_on") if getattr(self, "_hotkeys_ok", False) else tr("record.hotkeys_off")
-        saved = len(list(self._slides_dir.glob("*.png")))
+        saved = len(list(self._slides_dir.glob("*.png"))) if self._slides_dir else 0
         region = tr("record.region_none") if self._region is None else tr("record.region_set")
         rec = tr("record.rec_running") if self._recording else tr("record.rec_idle")
         self._status.setText(tr("record.status", rec=rec, region=region, count=saved, hk=hk))
@@ -275,5 +322,11 @@ class ControlWindow(QWidget):
             pass
         self._capturer.close()
         self._mic.stop()
-        self._system.stop()
+        if self._system is not None:
+            self._system.stop()
+        # Post-process (loudness-match + MP3) if a recording was made.
+        if self._on_process is not None and self._system_wav is not None and (
+            self._system_wav.exists() or self._mic.segments
+        ):
+            self._on_process(self._system_wav, self._mic.segments)
         super().closeEvent(event)
