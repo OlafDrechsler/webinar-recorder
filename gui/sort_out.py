@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from core.i18n import tr
 from core.settings import get_data_dir, get_sortout_config, set_sortout_config
 from gui.branding import APP_NAME, app_icon
 from core.slide_dedupe import (
@@ -206,16 +207,16 @@ class SortOutWindow(QWidget):
         self._ref_index = 0
         self._mask_mode = IGNORE
         self._action = "move"  # "move" or "delete"
-        self.setWindowTitle(f"{APP_NAME} – Folien aussortieren – {self._folder.name}")
+        self.setWindowTitle(f"{APP_NAME} – {tr('hub.sort')} – {self._folder.name}")
         self.setWindowIcon(app_icon())
 
         self._canvas = MaskCanvas()
         self._ref_label = QLabel()
 
         # Reference-image stepping.
-        prev_btn = QPushButton("‹ vorheriges")
+        prev_btn = QPushButton(tr("sort.prev"))
         prev_btn.clicked.connect(lambda: self._step_ref(-1))
-        next_btn = QPushButton("nächstes ›")
+        next_btn = QPushButton(tr("sort.next"))
         next_btn.clicked.connect(lambda: self._step_ref(1))
         ref_row = QHBoxLayout()
         ref_row.addWidget(prev_btn)
@@ -223,13 +224,13 @@ class SortOutWindow(QWidget):
         ref_row.addWidget(next_btn)
 
         # Drawing tools.
-        rect_btn = QPushButton("Rechteck")
+        rect_btn = QPushButton(tr("sort.rect"))
         rect_btn.clicked.connect(lambda: self._canvas.set_tool(RECT))
-        ell_btn = QPushButton("Ellipse")
+        ell_btn = QPushButton(tr("sort.ellipse"))
         ell_btn.clicked.connect(lambda: self._canvas.set_tool(ELLIPSE))
-        undo_btn = QPushButton("Letzten Bereich entfernen")
+        undo_btn = QPushButton(tr("sort.remove_last"))
         undo_btn.clicked.connect(self._canvas.undo)
-        clear_btn = QPushButton("Alle löschen")
+        clear_btn = QPushButton(tr("sort.clear_all"))
         clear_btn.clicked.connect(self._canvas.clear_regions)
         self._mode_btn = QPushButton()
         self._mode_btn.clicked.connect(self._toggle_mask_mode)
@@ -243,12 +244,12 @@ class SortOutWindow(QWidget):
         self._thr.setValue(5)              # 0.5%
         self._thr.valueChanged.connect(self._update_thr_label)
         self._thr_label = QLabel()
-        save_btn = QPushButton("Maske speichern…")
+        save_btn = QPushButton(tr("sort.mask_save"))
         save_btn.clicked.connect(self._save_mask_file)
-        load_btn = QPushButton("Maske laden…")
+        load_btn = QPushButton(tr("sort.mask_load"))
         load_btn.clicked.connect(self._load_mask_file)
         thr_row = QHBoxLayout()
-        thr_row.addWidget(QLabel("Empfindlichkeit:"))
+        thr_row.addWidget(QLabel(tr("sort.sensitivity")))
         thr_row.addWidget(self._thr, stretch=1)
         thr_row.addWidget(self._thr_label)
         thr_row.addWidget(save_btn)
@@ -257,9 +258,9 @@ class SortOutWindow(QWidget):
         # Actions.
         self._action_btn = QPushButton()
         self._action_btn.clicked.connect(self._toggle_action)
-        dry_btn = QPushButton("Probelauf")
+        dry_btn = QPushButton(tr("sort.dry_run"))
         dry_btn.clicked.connect(self._dry_run)
-        run_btn = QPushButton("Start")
+        run_btn = QPushButton(tr("common.start"))
         run_btn.setStyleSheet("font-weight: bold; padding: 6px;")
         run_btn.clicked.connect(self._run)
         action_row = QHBoxLayout()
@@ -284,7 +285,7 @@ class SortOutWindow(QWidget):
         self._update_thr_label(self._thr.value())
         self._refresh_mode_labels()
         if not self._paths:
-            self._status.setText("Keine Folienbilder (NNNNN.png) in diesem Ordner gefunden.")
+            self._status.setText(tr("sort.no_slides"))
 
     # ----- reference image -----
     def _step_ref(self, delta: int) -> None:
@@ -300,7 +301,7 @@ class SortOutWindow(QWidget):
         path = self._paths[self._ref_index]
         self._canvas.set_base(frame_to_qpixmap(load_frame(path)))
         self._ref_label.setText(
-            f"Referenzbild {self._ref_index + 1}/{len(self._paths)}: {path.name}"
+            tr("sort.reference", i=self._ref_index + 1, n=len(self._paths), name=path.name)
         )
 
     # ----- toggles / labels -----
@@ -314,13 +315,13 @@ class SortOutWindow(QWidget):
 
     def _refresh_mode_labels(self) -> None:
         self._mode_btn.setText(
-            "Modus: Ignorierbereich" if self._mask_mode == IGNORE else "Modus: Vergleichsbereich"
+            tr("sort.mode_ignore") if self._mask_mode == IGNORE else tr("sort.mode_compare")
         )
         if self._action == "move":
-            self._action_btn.setText("Aktion: Aussortieren (verschieben)")
+            self._action_btn.setText(tr("sort.action_move"))
             self._action_btn.setStyleSheet("")
         else:
-            self._action_btn.setText("Aktion: ENDGÜLTIG LÖSCHEN")
+            self._action_btn.setText(tr("sort.action_delete"))
             self._action_btn.setStyleSheet("color: white; background: #b00;")
 
     def _update_thr_label(self, value: int) -> None:
@@ -379,27 +380,27 @@ class SortOutWindow(QWidget):
             self._apply_config(cfg)
 
     def _save_mask_file(self) -> None:
-        name, _ = QFileDialog.getSaveFileName(self, "Maske speichern", "", "JSON (*.json)")
+        name, _ = QFileDialog.getSaveFileName(self, tr("sort.mask_save_title"), "", "JSON (*.json)")
         if name:
             Path(name).write_text(json.dumps(self._config_dict(), indent=2), encoding="utf-8")
 
     def _load_mask_file(self) -> None:
-        name, _ = QFileDialog.getOpenFileName(self, "Maske laden", "", "JSON (*.json)")
+        name, _ = QFileDialog.getOpenFileName(self, tr("sort.mask_load_title"), "", "JSON (*.json)")
         if name:
             try:
                 self._apply_config(json.loads(Path(name).read_text(encoding="utf-8")))
             except (ValueError, OSError) as exc:
-                QMessageBox.warning(self, "Laden fehlgeschlagen", str(exc))
+                QMessageBox.warning(self, tr("sort.load_failed"), str(exc))
 
     # ----- run -----
     def _plan(self) -> list[Path] | None:
         mask = self._current_mask()
         if mask is None or not self._paths:
-            QMessageBox.information(self, "Nichts zu tun", "Keine Bilder vorhanden.")
+            QMessageBox.information(self, tr("sort.nothing_title"), tr("sort.nothing_body"))
             return None
         set_sortout_config(self._config_dict())  # remember mask for next time
 
-        dialog = QProgressDialog("Vergleiche Bilder…", "Abbrechen", 0, len(self._paths), self)
+        dialog = QProgressDialog(tr("sort.comparing"), tr("common.cancel"), 0, len(self._paths), self)
         dialog.setWindowModality(Qt.WindowModal)
         dialog.setMinimumDuration(0)
 
@@ -424,17 +425,15 @@ class SortOutWindow(QWidget):
         removals = self._plan()
         if removals is None:
             return
-        self._status.setText(
-            f"Probelauf: {len(removals)} von {len(self._paths)} Bildern wären Duplikate "
-            f"(es bliebe(n) {len(self._paths) - len(removals)})."
-        )
+        self._status.setText(tr(
+            "sort.dry_result", removed=len(removals), total=len(self._paths),
+            kept=len(self._paths) - len(removals),
+        ))
 
     def _run(self) -> None:
         if self._action == "delete":
             confirm = QMessageBox.question(
-                self, "Endgültig löschen?",
-                "Die als Duplikat erkannten Bilder werden UNWIDERRUFLICH gelöscht.\n"
-                "Fortfahren?",
+                self, tr("sort.delete_confirm_title"), tr("sort.delete_confirm_body"),
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
             if confirm != QMessageBox.Yes:
@@ -444,7 +443,7 @@ class SortOutWindow(QWidget):
         if removals is None:
             return
         if not removals:
-            self._status.setText("Keine Duplikate gefunden – nichts geändert.")
+            self._status.setText(tr("sort.none_found"))
             return
 
         if self._action == "move":
@@ -455,25 +454,25 @@ class SortOutWindow(QWidget):
                     shutil.move(str(p), str(dest / p.name))
                 except OSError:
                     pass
-            done = f"{len(removals)} Bilder nach '_aussortiert' verschoben."
+            done = tr("sort.moved", n=len(removals))
         else:
             for p in removals:
                 try:
                     p.unlink()
                 except OSError:
                     pass
-            done = f"{len(removals)} Bilder endgültig gelöscht."
+            done = tr("sort.deleted", n=len(removals))
 
         self._paths = auto_frames(self._folder)
         self._ref_index = min(self._ref_index, max(0, len(self._paths) - 1))
         self._refresh_ref()
-        self._status.setText(f"{done} Verbleibend: {len(self._paths)}.")
+        self._status.setText(tr("sort.remaining", done=done, n=len(self._paths)))
 
 
 def open_sorter(folder: Path | None = None) -> SortOutWindow | None:
     """Show the folder picker (unless given) and open the sort-out window."""
     if folder is None:
-        chosen = QFileDialog.getExistingDirectory(None, "Folienordner wählen", str(get_data_dir()))
+        chosen = QFileDialog.getExistingDirectory(None, tr("sort.choose_folder"), str(get_data_dir()))
         if not chosen:
             return None
         folder = Path(chosen)

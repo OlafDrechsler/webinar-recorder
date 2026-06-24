@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.filmstrip import build_filmstrip, visible_slots
+from core.i18n import tr
 from core.mic_playback import parse_segment_start, segment_local_offset
 from core.playback import SEEK_STEP_MS, seek_target, speed_percent_values
 from core.settings import get_data_dir, get_player_volumes, set_player_volumes
@@ -145,7 +146,7 @@ class SlideLabel(QLabel):
     hold_end = Signal()
 
     def __init__(self) -> None:
-        super().__init__("Kein Ordner geladen")
+        super().__init__(tr("player.no_folder"))
         self.setAlignment(Qt.AlignCenter)
         self.setMinimumSize(360, 240)  # allow the window to be dragged fairly small
         self.setStyleSheet("background:#161616;color:#888;")
@@ -376,14 +377,14 @@ class Player(QWidget):
         self._system_out.setVolume(sys_vol / 100.0)
 
         # --- header: folder picker ---
-        self._path_lbl = QLabel("(kein Ordner geladen)")
+        self._path_lbl = QLabel(tr("player.no_folder_loaded"))
         self._path_lbl.setStyleSheet("color:#888;")
         self._path_lbl.setMinimumWidth(0)
         self._path_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        choose = QPushButton("Ordner wählen…")
+        choose = QPushButton(tr("player.choose_folder_btn"))
         choose.clicked.connect(self._choose_folder)
         header = QHBoxLayout()
-        header.addWidget(QLabel("Ordner:"))
+        header.addWidget(QLabel(tr("player.folder_label")))
         header.addWidget(self._path_lbl, stretch=1)
         header.addWidget(choose)
 
@@ -391,6 +392,7 @@ class Player(QWidget):
         self._slide = SlideLabel()
         self._overlay = ControlsOverlay()
         self._slide.attach_overlay(self._overlay)
+        self._slide.setToolTip(tr("player.slide_tip"))
         self._slide.clicked.connect(self._on_image_click)
         self._slide.seek_back.connect(lambda: self._seek_relative(-SEEK_STEP_MS))
         self._slide.seek_forward.connect(lambda: self._seek_relative(SEEK_STEP_MS))
@@ -406,7 +408,7 @@ class Player(QWidget):
         self._overlay_timer.setSingleShot(True)
         self._overlay_timer.timeout.connect(self._overlay.hide)
 
-        self._fname = QLabel("Folie: —")
+        self._fname = QLabel(tr("player.slide_none"))
         self._fname.setStyleSheet("color:#888;")
 
         self._filmstrip = FilmstripBar()
@@ -416,14 +418,14 @@ class Player(QWidget):
         # --- transport ---
         self._back_btn = QPushButton()
         self._back_btn.setIcon(skip_back_icon(26))      # circular "10" arrow, like the overlay
-        self._back_btn.setToolTip("10 s zurück")
+        self._back_btn.setToolTip(tr("player.back_tip"))
         self._back_btn.clicked.connect(lambda: self._seek_relative(-SEEK_STEP_MS))
         self._play_btn = QPushButton()
         self._play_btn.setIcon(play_icon(22))
         self._play_btn.clicked.connect(self._toggle_play)
         self._fwd_btn = QPushButton()
         self._fwd_btn.setIcon(skip_forward_icon(26))
-        self._fwd_btn.setToolTip("10 s vor")
+        self._fwd_btn.setToolTip(tr("player.fwd_tip"))
         self._fwd_btn.clicked.connect(lambda: self._seek_relative(SEEK_STEP_MS))
         for b in (self._back_btn, self._play_btn, self._fwd_btn):
             b.setStyleSheet(_TRANSPORT_BTN)
@@ -438,9 +440,9 @@ class Player(QWidget):
         self._speed.setCurrentText("100 %")
         self._speed.currentIndexChanged.connect(self._on_speed)
 
-        self._note_btn = QPushButton("Notiz")
+        self._note_btn = QPushButton(tr("player.note"))
         self._note_btn.setStyleSheet(_TRANSPORT_BTN + "QPushButton{color:white;}")
-        self._note_btn.setToolTip("Aktuelle Folie pausieren und annotieren (wird im Filmstreifen abgelegt)")
+        self._note_btn.setToolTip(tr("player.note_tip"))
         self._note_btn.clicked.connect(self._open_editor)
 
         controls = QHBoxLayout()
@@ -449,7 +451,7 @@ class Player(QWidget):
         controls.addWidget(self._fwd_btn)
         controls.addWidget(self._slider, stretch=1)
         controls.addWidget(self._time)
-        controls.addWidget(QLabel("Tempo:"))
+        controls.addWidget(QLabel(tr("player.tempo")))
         controls.addWidget(self._speed)
         controls.addWidget(self._note_btn)
 
@@ -465,17 +467,17 @@ class Player(QWidget):
         self._mic_vol.valueChanged.connect(self._on_mic_volume)
         self._mic_vol_lbl = QLabel(f"{mic_vol}%")
         vol_row = QHBoxLayout()
-        vol_row.addWidget(QLabel("System:"))
+        vol_row.addWidget(QLabel(tr("player.system")))
         vol_row.addWidget(self._sys_vol)
         vol_row.addWidget(self._sys_vol_lbl)
         vol_row.addSpacing(16)
-        vol_row.addWidget(QLabel("Mikro:"))
+        vol_row.addWidget(QLabel(tr("player.mic")))
         vol_row.addWidget(self._mic_vol)
         vol_row.addWidget(self._mic_vol_lbl)
 
         # Mic-segment list with jump-to: a button whose menu lists each segment's
         # start time (mm:ss); choosing one seeks there and plays.
-        self._seg_btn = QPushButton("Mikro-Segmente: 0")
+        self._seg_btn = QPushButton(tr("player.segments", n=0))
         self._seg_btn.setStyleSheet(
             "QPushButton{color:white;background:#2a2a2a;border:none;border-radius:6px;padding:4px 10px;}"
         )
@@ -503,7 +505,7 @@ class Player(QWidget):
     # ----- session loading -----
     def _choose_folder(self) -> None:
         start = str(self._slides_dir.parent if self._slides_dir else get_data_dir())
-        folder = QFileDialog.getExistingDirectory(self, "Aufnahme-Ordner wählen", start)
+        folder = QFileDialog.getExistingDirectory(self, tr("player.choose_folder_title"), start)
         if folder:
             self.load_session(Path(folder))
 
@@ -553,7 +555,7 @@ class Player(QWidget):
         if self._frames:
             self.show_slide(self._frames[0].name)
         else:
-            self._slide.setText("Keine Folien in diesem Ordner")
+            self._slide.setText(tr("player.no_slides_folder"))
             self._fname.setText("Folie: —")
 
     # ----- slides -----
@@ -562,7 +564,7 @@ class Player(QWidget):
             return
         self._current_slide = name
         self._slide.set_slide_pixmap(QPixmap(str(self._slides_dir / name)))
-        self._fname.setText(f"Folie: {name}")
+        self._fname.setText(tr("player.slide", name=name))
         if name in self._index_of:
             self._filmstrip.set_current(self._index_of[name])
 
@@ -601,8 +603,8 @@ class Player(QWidget):
     # ----- film-strip context menu -----
     def _show_frame_menu(self, index: int) -> None:
         menu = QMenu(self)
-        act_edit = menu.addAction("Bearbeiten")
-        act_del = menu.addAction("Löschen")
+        act_edit = menu.addAction(tr("common.edit"))
+        act_del = menu.addAction(tr("common.delete"))
         chosen = menu.exec(QCursor.pos())
         if chosen == act_edit:
             self._edit_frame(index)
@@ -630,7 +632,7 @@ class Player(QWidget):
             return
         frame = self._frames[index]
         if QMessageBox.question(
-            self, "Bild löschen?", f"'{frame.name}' wirklich löschen?",
+            self, tr("player.delete_title"), tr("player.delete_body", name=frame.name),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         ) != QMessageBox.Yes:
             return
@@ -729,7 +731,7 @@ class Player(QWidget):
     # ----- mic segment list / jump -----
     def _rebuild_segment_menu(self) -> None:
         self._seg_menu.clear()
-        self._seg_btn.setText(f"Mikro-Segmente: {len(self._segments)}")
+        self._seg_btn.setText(tr("player.segments", n=len(self._segments)))
         self._seg_btn.setEnabled(bool(self._segments))
         for seg in sorted(self._segments, key=lambda s: s.start_ms):
             act = self._seg_menu.addAction(_fmt(seg.start_ms))

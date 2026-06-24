@@ -14,7 +14,7 @@ def test_german():
 def test_english():
     _lang("en")
     assert i18n.tr("hub.record") == "Record"
-    assert i18n.tr("hub.sort") == "Sort out slides"
+    assert i18n.tr("hub.sort") == "Filter slides"
 
 
 def test_other_language_filled():

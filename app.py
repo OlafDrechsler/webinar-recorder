@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from PySide6.QtCore import QEventLoop, QObject, QThread, Qt, Signal
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QProgressDialog
 
+from core.i18n import tr
 from core.loudness import aggregate_mean_db, compute_gain_db
 from core.settings import get_mic_device
 from gui.branding import app_icon
@@ -64,9 +65,8 @@ def _choose_session(app: QApplication) -> Path | None:
         except OSError as exc:
             QMessageBox.warning(
                 None,
-                "Ordner nicht nutzbar",
-                f"Der Ordner konnte nicht angelegt werden:\n{base}\n\n{exc}\n\n"
-                "Bitte einen anderen Speicherort wählen.",
+                tr("storage.error_title"),
+                tr("storage.error_body", path=base, error=exc),
             )
 
 
@@ -141,7 +141,7 @@ def _normalize_and_transcode(system_wav: Path, mic_segments: list[Path], progres
         if progress is not None:
             progress(label, done, total)
 
-    step("System-Ton wird umgewandelt…", 0)
+    step(tr("progress.system"), 0)
     sys_lufs, sys_tp = measure_loudness(system_wav)
     transcode_to_mp3(system_wav, gain_db=compute_gain_db(sys_lufs, sys_tp))
 
@@ -149,15 +149,15 @@ def _normalize_and_transcode(system_wav: Path, mic_segments: list[Path], progres
     if n:
         measured = []
         for i, seg in enumerate(mic_segments):
-            step(f"Analysiere Mikro-Segment {i + 1}/{n}…", 1)
+            step(tr("progress.analyze_seg", i=i + 1, n=n), 1)
             measured.append(measure_loudness(seg))
         mic_lufs = aggregate_mean_db([lufs for lufs, _ in measured])
         peaks = [tp for _, tp in measured if tp is not None]
         mic_gain = compute_gain_db(mic_lufs, max(peaks) if peaks else None)
         for i, seg in enumerate(mic_segments):
-            step(f"Wandle Mikro-Segment {i + 1}/{n} um…", 1 + i)
+            step(tr("progress.convert_seg", i=i + 1, n=n), 1 + i)
             transcode_to_mp3(seg, gain_db=mic_gain)
-    step("Fertig.", total)
+    step(tr("progress.done"), total)
 
 
 class _TranscodeWorker(QObject):
@@ -174,7 +174,7 @@ class _TranscodeWorker(QObject):
 
     def run(self) -> None:
         def report(label: str, done: int, total: int) -> None:
-            self.progress.emit(f"Aufnahme wird verarbeitet…\n{label} ({done}/{total})")
+            self.progress.emit(f"{tr('progress.processing')}\n{label} ({done}/{total})")
 
         _normalize_and_transcode(self._system_wav, self._segments, progress=report)
         self.finished.emit()
@@ -183,9 +183,11 @@ class _TranscodeWorker(QObject):
 def _run_postprocessing_with_progress(system_wav: Path, segments: list[Path]) -> None:
     # Indeterminate (marquee) progress so it visibly keeps moving during the long
     # system-track transcode; the actual work runs in a worker thread.
-    dialog = QProgressDialog("Aufnahme wird verarbeitet…", None, 0, 0)
-    dialog.setWindowTitle("Bitte warten")
-    dialog.setWindowModality(Qt.ApplicationModal)
+    dialog = QProgressDialog(tr("progress.processing"), None, 0, 0)
+    dialog.setWindowTitle(tr("progress.wait_title"))
+    # Non-modal so the hub stays usable during the transcode (e.g. start sorting
+    # slides while the audio is still being processed).
+    dialog.setWindowModality(Qt.NonModal)
     dialog.setCancelButton(None)
     dialog.setMinimumDuration(0)
     dialog.show()

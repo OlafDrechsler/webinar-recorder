@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.i18n import tr
 from core.settings import set_mic_device
 
 # Slider integer range maps to a normalised threshold of 0..0.20.
@@ -35,7 +36,7 @@ _LEVEL_SCALE = 300
 class MicLevelWindow(QWidget):
     def __init__(self, mic_recorder) -> None:
         super().__init__()
-        self.setWindowTitle("Mikro-Pegel-Test")
+        self.setWindowTitle(tr("mic.level_test"))
         self._mic = mic_recorder
 
         self._bar = QProgressBar()
@@ -56,15 +57,14 @@ class MicLevelWindow(QWidget):
         self._state = QLabel()
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Sprich normal – der Balken sollte beim Reden "
-                                "über die Schwelle steigen, bei Stille darunter."))
+        layout.addWidget(QLabel(tr("mic.test_instruction")))
         dev_row = QHBoxLayout()
-        dev_row.addWidget(QLabel("Mikrofon:"))
+        dev_row.addWidget(QLabel(tr("mic.device_label")))
         dev_row.addWidget(self._device_box, stretch=1)
         layout.addLayout(dev_row)
         layout.addWidget(self._bar)
         row = QHBoxLayout()
-        row.addWidget(QLabel("Schwelle:"))
+        row.addWidget(QLabel(tr("mic.threshold_label")))
         row.addWidget(self._slider)
         layout.addLayout(row)
         layout.addWidget(self._info)
@@ -95,14 +95,13 @@ class MicLevelWindow(QWidget):
     def _on_threshold(self, value: int) -> None:
         thr = value * _THRESH_PER_STEP
         self._mic.set_threshold(thr)
-        self._info.setText(f"Schwelle: {thr:.3f}")
+        self._info.setText(tr("mic.threshold_value", value=thr))
 
     def _refresh(self) -> None:
         level = self._mic.level
         self._bar.setValue(min(100, int(level * _LEVEL_SCALE)))
         over = level > self._mic.threshold
-        self._state.setText("Status: ÜBER Schwelle (würde aufnehmen)" if over
-                            else "Status: unter Schwelle (Stille)")
+        self._state.setText(tr("mic.over") if over else tr("mic.under"))
         self._state.setStyleSheet("color: green;" if over else "color: gray;")
 
     def closeEvent(self, event) -> None:  # noqa: N802

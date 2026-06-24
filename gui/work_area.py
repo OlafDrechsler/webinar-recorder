@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QWidgetAction,
 )
 
+from core.i18n import tr
 from core.naming import marked_frame_name
 from core.settings import get_work_area_geometry, set_work_area_geometry
 
@@ -51,13 +52,14 @@ _DEFAULT_HL_WIDTH = 18
 _DEFAULT_PEN_WIDTH = 4
 _DEFAULT_TEXT_SIZE = 28
 
+# (translation key, colour)
 PALETTE = [
-    ("Gelb", QColor(255, 235, 0)),
-    ("Rot", QColor(230, 0, 0)),
-    ("Blau", QColor(0, 120, 255)),
-    ("Grün", QColor(0, 170, 0)),
-    ("Schwarz", QColor(0, 0, 0)),
-    ("Weiß", QColor(255, 255, 255)),
+    ("color.yellow", QColor(255, 235, 0)),
+    ("color.red", QColor(230, 0, 0)),
+    ("color.blue", QColor(0, 120, 255)),
+    ("color.green", QColor(0, 170, 0)),
+    ("color.black", QColor(0, 0, 0)),
+    ("color.white", QColor(255, 255, 255)),
 ]
 
 
@@ -391,7 +393,7 @@ class WorkAreaWindow(QWidget):
     def __init__(self, frame: np.ndarray, seconds: int, slides_dir: Path,
                  save_as: str | None = None) -> None:
         super().__init__()
-        self.setWindowTitle(f"Arbeitsbereich – Sekunde {seconds}")
+        self.setWindowTitle(tr("edit.title", sec=seconds))
         self._seconds = seconds
         self._slides_dir = Path(slides_dir)
         self._save_as = save_as
@@ -401,13 +403,13 @@ class WorkAreaWindow(QWidget):
         self._status = QLabel("")
 
         toolbar = QHBoxLayout()
-        toolbar.addWidget(self._tool_button("Textmarker", HIGHLIGHTER))
-        toolbar.addWidget(self._tool_button("Stift", PEN))
-        toolbar.addWidget(self._tool_button("Text", TEXT))
-        eraser_btn = QPushButton("Radierer")
+        toolbar.addWidget(self._tool_button(tr("edit.highlighter"), HIGHLIGHTER))
+        toolbar.addWidget(self._tool_button(tr("edit.pen"), PEN))
+        toolbar.addWidget(self._tool_button(tr("edit.text"), TEXT))
+        eraser_btn = QPushButton(tr("edit.eraser"))
         eraser_btn.clicked.connect(lambda: self._canvas.set_tool(ERASER))
         toolbar.addWidget(eraser_btn)
-        save_btn = QPushButton("Speichern")
+        save_btn = QPushButton(tr("common.save"))
         save_btn.clicked.connect(self._save)
         toolbar.addWidget(save_btn)
 
@@ -432,7 +434,7 @@ class WorkAreaWindow(QWidget):
             self._add_thickness_widget(menu, tool)
         menu.addSeparator()
         for cname, color in PALETTE:
-            act = menu.addAction(_swatch(color), cname)
+            act = menu.addAction(_swatch(color), tr(cname))
             act.triggered.connect(lambda _=False, c=color: self._canvas.set_color(c))
         menu.aboutToShow.connect(lambda: self._canvas.set_tool(tool))
         btn.setMenu(menu)
@@ -442,7 +444,7 @@ class WorkAreaWindow(QWidget):
         container = QWidget()
         v = QVBoxLayout(container)
         v.setContentsMargins(8, 6, 8, 6)
-        v.addWidget(QLabel("Dicke"))
+        v.addWidget(QLabel(tr("edit.thickness")))
         slider = QSlider(Qt.Horizontal)
         if tool == HIGHLIGHTER:
             slider.setRange(4, 60)
@@ -477,7 +479,7 @@ class WorkAreaWindow(QWidget):
 
         def on_size(val: int) -> None:
             self._canvas.set_text_size(val)
-            header.setText(f"Schriftgröße: {val} px")
+            header.setText(tr("edit.font_size", n=val))
             f = sample.font()
             f.setPixelSize(val)
             sample.setFont(f)

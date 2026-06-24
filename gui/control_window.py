@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.capture_state import CaptureState
+from core.i18n import tr
 from core.naming import auto_frame_name
 from gui.branding import APP_NAME, app_icon
 from gui.mic_test import MicLevelWindow
@@ -68,7 +69,7 @@ class _Hotkeys(QObject):
 class ControlWindow(QWidget):
     def __init__(self, system_recorder, mic_recorder, slides_dir: Path) -> None:
         super().__init__()
-        self.setWindowTitle(f"{APP_NAME} – Aufnahme")
+        self.setWindowTitle(f"{APP_NAME} – {tr('hub.record')}")
         self.setWindowIcon(app_icon())
         # Stay on top, but a normal top-level window (not Qt.Tool) so it shows in
         # the taskbar and can be reached with Alt+Tab.
@@ -89,22 +90,22 @@ class ControlWindow(QWidget):
 
         # --- UI ---
         # The main start/stop toggle sits on top and is visually prominent.
-        self._record_btn = QPushButton("Aufnahme starten")
+        self._record_btn = QPushButton(tr("record.start"))
         self._record_btn.setStyleSheet("font-weight: bold; padding: 6px;")
         self._record_btn.clicked.connect(self._toggle_recording)
-        self._region_btn = QPushButton("Aufnahmebereich wählen")
+        self._region_btn = QPushButton(tr("record.region_choose"))
         self._region_btn.clicked.connect(self._reselect_region)
         self._photo_btn = QPushButton()
         self._photo_btn.clicked.connect(self._toggle_photo)
-        mark_btn = QPushButton("Bild bearbeiten")
+        mark_btn = QPushButton(tr("record.edit_image"))
         mark_btn.clicked.connect(self._open_work_area)
-        mic_test_btn = QPushButton("Mikro-Pegel-Test")
+        mic_test_btn = QPushButton(tr("mic.level_test"))
         mic_test_btn.clicked.connect(self._open_mic_test)
 
         # Mic mode as a three-way radio: an / aus / auto.
-        self._rb_on = QRadioButton("an")
-        self._rb_off = QRadioButton("aus")
-        self._rb_auto = QRadioButton("auto")
+        self._rb_on = QRadioButton(tr("mic.on"))
+        self._rb_off = QRadioButton(tr("mic.off"))
+        self._rb_auto = QRadioButton(tr("mic.auto"))
         self._mic_group = QButtonGroup(self)
         for rb in (self._rb_on, self._rb_off, self._rb_auto):
             self._mic_group.addButton(rb)
@@ -122,7 +123,7 @@ class ControlWindow(QWidget):
         row2 = QHBoxLayout()
         row2.addWidget(mark_btn)
         row3 = QHBoxLayout()
-        row3.addWidget(QLabel("Mikro:"))
+        row3.addWidget(QLabel(tr("mic.label")))
         row3.addWidget(self._rb_on)
         row3.addWidget(self._rb_off)
         row3.addWidget(self._rb_auto)
@@ -176,7 +177,7 @@ class ControlWindow(QWidget):
         self._system.start()
         self._mic.enable_recording(self._start)
         self._recording = True
-        self._record_btn.setText("Aufnahme beenden")
+        self._record_btn.setText(tr("record.stop"))
         self._refresh_labels()
 
     # ----- toggles -----
@@ -196,26 +197,27 @@ class ControlWindow(QWidget):
         {"auto": self._rb_auto, "on": self._rb_on, "off": self._rb_off}[nxt].setChecked(True)
 
     def _refresh_labels(self) -> None:
-        self._photo_btn.setText(f"Foto-Aufnahme: {'AN' if self._photo_on else 'aus'}")
-        hk = "Hotkeys aktiv" if getattr(self, "_hotkeys_ok", False) else "Hotkeys aus (Admin nötig)"
+        self._photo_btn.setText(
+            f"{tr('record.photo')}: {tr('common.on') if self._photo_on else tr('common.off')}"
+        )
+        hk = tr("record.hotkeys_on") if getattr(self, "_hotkeys_ok", False) else tr("record.hotkeys_off")
         saved = len(list(self._slides_dir.glob("*.png")))
-        region = "—" if self._region is None else "gewählt"
-        rec = "läuft ●" if self._recording else "bereit (nicht gestartet)"
-        self._status.setText(f"Aufnahme: {rec} | Bereich: {region} | Folien: {saved} | {hk}")
+        region = tr("record.region_none") if self._region is None else tr("record.region_set")
+        rec = tr("record.rec_running") if self._recording else tr("record.rec_idle")
+        self._status.setText(tr("record.status", rec=rec, region=region, count=saved, hk=hk))
 
-        recording = "red" if self._recording else "gray"
         if self._mic_mode == "off":
-            text, color = "Mikro: AUS (nimmt nichts auf)", "gray"
+            text, color = tr("record.mic_off"), "gray"
         elif self._mic_mode == "on":
-            text = "Mikro: AN (nimmt durchgehend auf ●)" if self._recording else "Mikro: AN (startet mit der Aufnahme)"
-            color = recording
+            text = tr("record.mic_on_recording") if self._recording else tr("record.mic_on_idle")
+            color = "red" if self._recording else "gray"
         else:  # auto
             if not self._recording:
-                text, color = "Mikro: Auto (Pegel-Test möglich, nimmt noch nicht auf)", "gray"
+                text, color = tr("record.mic_auto_idle"), "gray"
             elif self._mic.is_active:
-                text, color = "Mikro: Auto – nimmt auf ●", "red"
+                text, color = tr("record.mic_auto_active"), "red"
             else:
-                text, color = "Mikro: Auto – wartet auf Geräusch", "gray"
+                text, color = tr("record.mic_auto_wait"), "gray"
         self._mic_status.setText(text)
         self._mic_status.setStyleSheet(f"color: {color};")
 
@@ -258,7 +260,7 @@ class ControlWindow(QWidget):
         if region is not None:
             self._region = region
             self._state.reset()  # dimensions changed; force next save
-            self._region_btn.setText("Bereich neu wählen")
+            self._region_btn.setText(tr("record.region_rechoose"))
             self._refresh_labels()
 
     # ----- shutdown -----

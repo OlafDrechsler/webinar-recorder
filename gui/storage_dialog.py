@@ -24,34 +24,30 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from core.i18n import tr
 from core.settings import get_data_dir, set_data_dir
 
 
 class StorageDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Speicherort wählen")
+        self.setWindowTitle(tr("storage.title"))
         self._chosen: Path | None = None
 
-        info = QLabel(
-            "Wo sollen die Aufnahmen gespeichert werden?\n"
-            "Tipp: einen OneDrive-Ordner wählen, der zwischen den Rechnern "
-            "synchronisiert wird. Die Auswahl wird gemerkt und beim nächsten "
-            "Start vorausgefüllt."
-        )
+        info = QLabel(tr("storage.info"))
         info.setWordWrap(True)
 
         # Pre-fill with the remembered (or default) folder.
         self._edit = QLineEdit(str(get_data_dir()))
-        browse = QPushButton("Durchsuchen…")
+        browse = QPushButton(tr("common.browse"))
         browse.clicked.connect(self._browse)
         path_row = QHBoxLayout()
         path_row.addWidget(self._edit, stretch=1)
         path_row.addWidget(browse)
 
-        cancel = QPushButton("Abbrechen")
+        cancel = QPushButton(tr("common.cancel"))
         cancel.clicked.connect(self.reject)
-        ok = QPushButton("Weiter")
+        ok = QPushButton(tr("common.next"))
         ok.setDefault(True)
         ok.clicked.connect(self._accept)
         btn_row = QHBoxLayout()
@@ -67,7 +63,7 @@ class StorageDialog(QDialog):
 
     def _browse(self) -> None:
         start = self._edit.text().strip() or str(Path.home())
-        folder = QFileDialog.getExistingDirectory(self, "Ordner wählen", start)
+        folder = QFileDialog.getExistingDirectory(self, tr("storage.choose_folder"), start)
         if folder:
             self._edit.setText(folder)
 
