@@ -7,11 +7,13 @@ previous kept image *outside* that region. The first of each identical run is
 always kept.
 
 Workflow (see also core/slide_dedupe.py for the comparison logic):
-1. Pick the (pre-sorted) folder.
+1. Pick the (pre-sorted) folder (chosen in the window header).
 2. Draw one or more ignore regions on a reference image; step through images to
    find a representative one. Rectangle or ellipse; mode Ignorieren/Vergleichen.
-3. Set the sensitivity, run "Probelauf" to see how many would be removed.
-4. Toggle Aussortieren (move to ``_aussortiert``) vs. Endgültig löschen, then Start.
+3. Set the sensitivity and the action (move to ``_aussortiert`` vs. delete), then
+   Start. A film strip animates each keep/discard decision so it is verifiable;
+   a speed slider (slow↔fast) and Pause/Keep/Discard let you watch and intervene.
+4. The chosen action is applied to the detected duplicates at the end of the run.
 
 ``*_markiert_*`` files (your annotations) are never touched. The last mask is
 remembered (core.settings) and can also be saved/loaded as a file.
@@ -27,7 +29,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
-from PySide6.QtCore import QPoint, QRect, Qt
+from PySide6.QtCore import QPoint, QRect, Qt, QTimer
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -35,7 +37,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
-    QProgressDialog,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -55,8 +56,8 @@ from core.slide_dedupe import (
     RECT,
     Region,
     build_compare_mask,
+    masked_frames_differ,
     numeric_key,
-    plan_deletions,
 )
 
 _AUTO_FRAME = re.compile(r"^\d+\.png$", re.IGNORECASE)
@@ -80,8 +81,126 @@ def auto_frames(folder: Path) -> list[Path]:
     return sorted(files, key=numeric_key)
 
 
-class _Cancelled(Exception):
-    pass
+class SortFilmstrip(QWidget):
+    """Animated film strip for the dedup run.
+
+    The current baseline is always centred; kept baselines stack to the left
+    (history stays visible), upcoming candidates queue to the right. The
+    candidate (immediately right of centre) gets a red frame when it is about to
+    be discarded, then slides out so the rest shift left. Drawn via paintEvent
+    with cached thumbnails so it stays fast even at high speed.
+    """
+
+    THUMB_W = 116
+    THUMB_H = 70
+    GAP = 8
+    CAP_H = 16
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._frames: list[Path] = []
+        self._history: list[int] = []   # kept baselines; last item = current baseline
+        self._upcoming: list[int] = []  # not yet processed; [0] = next candidate
+        self._discard_pending = False
+        self._cache: dict[str, QPixmap] = {}
+        self.setFixedHeight(self.THUMB_H + self.CAP_H + 12)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+
+    def set_session(self, frames: list[Path]) -> None:
+        self._frames = list(frames)
+        self._cache.clear()
+        self._history = [0] if self._frames else []
+        self._upcoming = list(range(1, len(self._frames)))
+        self._discard_pending = False
+        self.update()
+
+    # ----- state -----
+    def has_candidate(self) -> bool:
+        return bool(self._upcoming)
+
+    def baseline_index(self) -> int | None:
+        return self._history[-1] if self._history else None
+
+    def candidate_index(self) -> int | None:
+        return self._upcoming[0] if self._upcoming else None
+
+    # ----- transitions -----
+    def mark_discard(self) -> None:
+        self._discard_pending = True
+        self.update()
+
+    def eject(self) -> int:
+        idx = self._upcoming.pop(0)
+        self._discard_pending = False
+        self.update()
+        return idx
+
+    def rebaseline(self) -> None:
+        if self._upcoming:
+            self._history.append(self._upcoming.pop(0))
+            self._discard_pending = False
+            self.update()
+
+    # ----- rendering -----
+    def _thumb(self, idx: int) -> QPixmap | None:
+        name = self._frames[idx].name
+        if name in self._cache:
+            return self._cache[name]
+        pix = QPixmap(str(self._frames[idx]))
+        if pix.isNull():
+            return None
+        scaled = pix.scaled(self.THUMB_W, self.THUMB_H, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._cache[name] = scaled
+        return scaled
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(22, 22, 22))
+        if not self._frames or not self._history:
+            return
+        step = self.THUMB_W + self.GAP
+        cx = self.width() / 2
+        n_side = int((self.width() / 2) // step) + 1
+        # centre = current baseline
+        self._draw_cell(p, cx, self._history[-1], "baseline")
+        # history to the left
+        for k in range(1, n_side + 1):
+            hi = len(self._history) - 1 - k
+            if hi >= 0:
+                self._draw_cell(p, cx - k * step, self._history[hi], "hist")
+        # upcoming to the right; [0] is the candidate being compared
+        for k in range(1, n_side + 1):
+            ui = k - 1
+            if ui < len(self._upcoming):
+                border = ("discard" if self._discard_pending else "candidate") if ui == 0 else "up"
+                self._draw_cell(p, cx + k * step, self._upcoming[ui], border)
+
+    def _draw_cell(self, p: QPainter, center_x: float, idx: int, border: str) -> None:
+        x = int(center_x - self.THUMB_W / 2)
+        y = 6
+        rect = QRect(x, y, self.THUMB_W, self.THUMB_H)
+        p.fillRect(rect, QColor(10, 10, 10))
+        thumb = self._thumb(idx)
+        if thumb is not None:
+            p.drawPixmap(x + (self.THUMB_W - thumb.width()) // 2,
+                         y + (self.THUMB_H - thumb.height()) // 2, thumb)
+        styles = {
+            "baseline": (QColor(45, 166, 255), 3),
+            "discard": (QColor(230, 40, 40), 4),
+            "candidate": (QColor(235, 200, 60), 2),
+            "hist": (QColor(70, 70, 70), 1),
+            "up": (QColor(70, 70, 70), 1),
+        }
+        col, w = styles.get(border, (QColor(70, 70, 70), 1))
+        p.setPen(QPen(col, w))
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(rect)
+        p.setPen(QColor(170, 170, 170))
+        f = p.font()
+        f.setPixelSize(9)
+        p.setFont(f)
+        p.drawText(QRect(x, y + self.THUMB_H, self.THUMB_W, self.CAP_H),
+                   Qt.AlignHCenter | Qt.AlignTop, self._frames[idx].name)
 
 
 class MaskCanvas(QWidget):
@@ -215,12 +334,12 @@ class SortOutWindow(QWidget):
         self._path_lbl.setStyleSheet("color:#888;")
         self._path_lbl.setMinimumWidth(0)
         self._path_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        folder_btn = QPushButton(tr("player.choose_folder_btn"))
-        folder_btn.clicked.connect(self._choose_folder)
+        self._folder_btn = QPushButton(tr("player.choose_folder_btn"))
+        self._folder_btn.clicked.connect(self._choose_folder)
         folder_row = QHBoxLayout()
         folder_row.addWidget(QLabel(tr("player.folder_label")))
         folder_row.addWidget(self._path_lbl, stretch=1)
-        folder_row.addWidget(folder_btn)
+        folder_row.addWidget(self._folder_btn)
 
         self._canvas = MaskCanvas()
         self._ref_label = QLabel()
@@ -267,21 +386,54 @@ class SortOutWindow(QWidget):
         thr_row.addWidget(save_btn)
         thr_row.addWidget(load_btn)
 
-        # Actions.
+        # Animated film strip + run controls (visualises the dedup decisions).
+        self._filmstrip = SortFilmstrip()
+        self._speed = QSlider(Qt.Horizontal)
+        self._speed.setRange(0, 100)   # 0 = slow (2 s/step), 100 = fast (no delay)
+        self._speed.setValue(0)
+        self._pause_btn = QPushButton(tr("sort.pause"))
+        self._pause_btn.clicked.connect(self._toggle_pause)
+        self._pause_btn.setVisible(False)
+        self._keep_btn = QPushButton(tr("sort.keep"))
+        self._keep_btn.clicked.connect(self._override_keep)
+        self._keep_btn.setVisible(False)
+        self._discard_btn = QPushButton(tr("sort.discard"))
+        self._discard_btn.clicked.connect(self._override_discard)
+        self._discard_btn.setVisible(False)
+        run_row = QHBoxLayout()
+        run_row.addWidget(QLabel(tr("sort.speed_slow")))
+        run_row.addWidget(self._speed, stretch=1)
+        run_row.addWidget(QLabel(tr("sort.speed_fast")))
+        run_row.addSpacing(12)
+        run_row.addWidget(self._pause_btn)
+        run_row.addWidget(self._keep_btn)
+        run_row.addWidget(self._discard_btn)
+
+        # Action toggle + Start.
         self._action_btn = QPushButton()
         self._action_btn.clicked.connect(self._toggle_action)
-        dry_btn = QPushButton(tr("sort.dry_run"))
-        dry_btn.clicked.connect(self._dry_run)
-        run_btn = QPushButton(tr("common.start"))
-        run_btn.setStyleSheet("font-weight: bold; padding: 6px;")
-        run_btn.clicked.connect(self._run)
+        self._run_btn = QPushButton(tr("common.start"))
+        self._run_btn.setStyleSheet("font-weight: bold; padding: 6px;")
+        self._run_btn.clicked.connect(self._run)
         action_row = QHBoxLayout()
         action_row.addWidget(self._action_btn)
         action_row.addStretch(1)
-        action_row.addWidget(dry_btn)
-        action_row.addWidget(run_btn)
+        action_row.addWidget(self._run_btn)
 
         self._status = QLabel()
+
+        # Run state.
+        self._running = False
+        self._paused = False
+        self._next_phase = "compare"
+        self._removals: list[Path] = []
+        self._mask = None
+        self._fraction_val = 0.005
+        self._baseline_idx: int | None = None
+        self._baseline_frame = None
+        self._step_timer = QTimer(self)
+        self._step_timer.setSingleShot(True)
+        self._step_timer.timeout.connect(self._do_phase)
 
         layout = QVBoxLayout(self)
         layout.addLayout(folder_row)
@@ -289,9 +441,11 @@ class SortOutWindow(QWidget):
         layout.addWidget(self._canvas, stretch=1)
         layout.addLayout(tools)
         layout.addLayout(thr_row)
+        layout.addWidget(self._filmstrip)
+        layout.addLayout(run_row)
         layout.addLayout(action_row)
         layout.addWidget(self._status)
-        self.resize(900, 760)
+        self.resize(960, 860)
 
         self._update_thr_label(self._thr.value())
         self._refresh_mode_labels()
@@ -314,6 +468,7 @@ class SortOutWindow(QWidget):
         self.setWindowTitle(f"{APP_NAME} – {tr('hub.sort')} – {self._folder.name}")
         self._apply_saved_config()
         self._refresh_ref()
+        self._filmstrip.set_session(self._paths)  # first image centred, rest to the right
         self._status.setText(tr("sort.no_slides") if not self._paths else "")
 
     # ----- reference image -----
@@ -421,60 +576,123 @@ class SortOutWindow(QWidget):
             except (ValueError, OSError) as exc:
                 QMessageBox.warning(self, tr("sort.load_failed"), str(exc))
 
-    # ----- run -----
-    def _plan(self) -> list[Path] | None:
+    # ----- animated run -----
+    def _delay_ms(self) -> int:
+        # slow (0) = 2000 ms/step, fast (100) = 0 ms (as fast as comparing allows).
+        return round(2000 * (100 - self._speed.value()) / 100)
+
+    def _baseline_frame_for(self, idx: int):
+        if self._baseline_idx != idx or self._baseline_frame is None:
+            self._baseline_idx = idx
+            self._baseline_frame = load_frame(self._paths[idx])
+        return self._baseline_frame
+
+    def _run(self) -> None:
+        if self._running:
+            return
         mask = self._current_mask()
         if mask is None or not self._paths:
             QMessageBox.information(self, tr("sort.nothing_title"), tr("sort.nothing_body"))
-            return None
-        set_sortout_config(self._config_dict())  # remember mask for next time
-
-        dialog = QProgressDialog(tr("sort.comparing"), tr("common.cancel"), 0, len(self._paths), self)
-        dialog.setWindowModality(Qt.WindowModal)
-        dialog.setMinimumDuration(0)
-
-        def progress(done: int, total: int) -> None:
-            dialog.setValue(done)
-            QApplication.processEvents()
-            if dialog.wasCanceled():
-                raise _Cancelled()
-
-        try:
-            removals = plan_deletions(
-                self._paths, load_frame, mask, fraction_threshold=self._fraction(),
-                progress=progress,
-            )
-        except _Cancelled:
-            dialog.close()
-            return None
-        dialog.close()
-        return removals
-
-    def _dry_run(self) -> None:
-        removals = self._plan()
-        if removals is None:
             return
-        self._status.setText(tr(
-            "sort.dry_result", removed=len(removals), total=len(self._paths),
-            kept=len(self._paths) - len(removals),
-        ))
-
-    def _run(self) -> None:
         if self._action == "delete":
-            confirm = QMessageBox.question(
+            if QMessageBox.question(
                 self, tr("sort.delete_confirm_title"), tr("sort.delete_confirm_body"),
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-            )
-            if confirm != QMessageBox.Yes:
+            ) != QMessageBox.Yes:
                 return
+        set_sortout_config(self._config_dict())
+        self._mask = mask
+        self._fraction_val = self._fraction()
+        self._removals = []
+        self._baseline_idx = None
+        self._baseline_frame = None
+        self._next_phase = "compare"
+        self._filmstrip.set_session(self._paths)
+        self._running = True
+        self._paused = False
+        self._set_run_ui(True)
+        self._schedule()
 
-        removals = self._plan()
-        if removals is None:
+    def _schedule(self) -> None:
+        if self._running and not self._paused:
+            self._step_timer.start(self._delay_ms())
+
+    def _do_phase(self) -> None:
+        if not self._running or self._paused:
             return
+        if not self._filmstrip.has_candidate():
+            self._finish()
+            return
+        if self._next_phase == "compare":
+            base = self._baseline_frame_for(self._filmstrip.baseline_index())
+            cand = load_frame(self._paths[self._filmstrip.candidate_index()])
+            if masked_frames_differ(base, cand, self._mask, fraction_threshold=self._fraction_val):
+                self._filmstrip.rebaseline()  # new baseline
+                self._baseline_idx = None
+                self._next_phase = "compare"
+            else:
+                self._filmstrip.mark_discard()  # red frame, eject after the delay
+                self._next_phase = "eject"
+        else:  # eject the duplicate
+            idx = self._filmstrip.eject()
+            self._removals.append(self._paths[idx])
+            self._next_phase = "compare"
+        self._schedule()
+
+    # ----- pause + manual override -----
+    def _toggle_pause(self) -> None:
+        if not self._running:
+            return
+        if self._paused:
+            self._paused = False
+            self._pause_btn.setText(tr("sort.pause"))
+            self._set_override_visible(False)
+            self._schedule()
+        else:
+            self._paused = True
+            self._step_timer.stop()
+            self._pause_btn.setText(tr("common.next"))
+            self._set_override_visible(True)
+
+    def _override_keep(self) -> None:
+        if not (self._running and self._paused and self._filmstrip.has_candidate()):
+            return
+        self._filmstrip.rebaseline()
+        self._baseline_idx = None
+        self._next_phase = "compare"
+        if not self._filmstrip.has_candidate():
+            self._finish()
+
+    def _override_discard(self) -> None:
+        if not (self._running and self._paused and self._filmstrip.has_candidate()):
+            return
+        idx = self._filmstrip.eject()
+        self._removals.append(self._paths[idx])
+        self._next_phase = "compare"
+        if not self._filmstrip.has_candidate():
+            self._finish()
+
+    def _set_override_visible(self, visible: bool) -> None:
+        self._keep_btn.setVisible(visible)
+        self._discard_btn.setVisible(visible)
+
+    def _set_run_ui(self, running: bool) -> None:
+        self._run_btn.setEnabled(not running)
+        self._action_btn.setEnabled(not running)
+        self._folder_btn.setEnabled(not running)
+        self._pause_btn.setVisible(running)
+        if not running:
+            self._set_override_visible(False)
+
+    def _finish(self) -> None:
+        self._running = False
+        self._paused = False
+        self._step_timer.stop()
+        self._set_run_ui(False)
+        removals = self._removals
         if not removals:
             self._status.setText(tr("sort.none_found"))
             return
-
         if self._action == "move":
             dest = self._folder / "_aussortiert"
             dest.mkdir(exist_ok=True)
@@ -495,6 +713,7 @@ class SortOutWindow(QWidget):
         self._paths = auto_frames(self._folder)
         self._ref_index = min(self._ref_index, max(0, len(self._paths) - 1))
         self._refresh_ref()
+        self._filmstrip.set_session(self._paths)
         self._status.setText(tr("sort.remaining", done=done, n=len(self._paths)))
 
 
