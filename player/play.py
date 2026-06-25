@@ -316,6 +316,14 @@ class FilmstripBar(QWidget):
                     self._rebuild()
                 return
 
+    def set_current_mic(self, start_ms: int) -> None:
+        for i, it in enumerate(self._items):
+            if it["kind"] == "mic" and it["start_ms"] == start_ms:
+                if i != self._current:
+                    self._current = i
+                    self._rebuild()
+                return
+
     def resizeEvent(self, event) -> None:  # noqa: N802
         self._rebuild()
 
@@ -924,6 +932,25 @@ class Player(QWidget):
         self._time.setToolTip(f"{ms // 1000} s")  # current time in seconds
         self._update_slide(ms // 1000)
         self._sync_segments(ms)
+        self._update_strip_focus(ms)
+
+    def _active_segment(self, ms: int) -> "MicSegment | None":
+        """The mic segment whose playback window covers ``ms`` (latest start wins)."""
+        active = None
+        for seg in self._segments:
+            if segment_local_offset(seg.start_ms, seg.duration, ms) is not None:
+                if active is None or seg.start_ms > active.start_ms:
+                    active = seg
+        return active
+
+    def _update_strip_focus(self, ms: int) -> None:
+        """Centre the strip on the active mic marker while one is playing, else on
+        the current slide. The big image keeps showing the slide-before either way."""
+        seg = self._active_segment(ms)
+        if seg is not None:
+            self._filmstrip.set_current_mic(seg.start_ms)
+        elif self._current_slide:
+            self._filmstrip.set_current_slide(self._current_slide)
 
     # ----- mic segment list / jump -----
     def _rebuild_segment_menu(self) -> None:
@@ -939,7 +966,8 @@ class Player(QWidget):
 
     def _jump_to_segment_ms(self, ms: int) -> None:
         self._seek(ms)
-        self._update_slide(ms // 1000)  # show the slide that was on screen then
+        self._update_slide(ms // 1000)        # big image: the slide that was on then
+        self._filmstrip.set_current_mic(ms)   # strip: centre the mic marker itself
         if not self._is_playing():
             self._toggle_play()
 
