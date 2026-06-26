@@ -316,6 +316,14 @@ class FilmstripBar(QWidget):
                     self._rebuild()
                 return
 
+    def update_items(self, items: list) -> None:
+        """Replace the items (e.g. when a mic length became known) but keep the
+        centred element — same count and order, so the index still points to it."""
+        self._items = items
+        if self._current >= len(items):
+            self._current = max(0, len(items) - 1)
+        self._rebuild()
+
     def set_current_for_second(self, second: int) -> None:
         """Centre the latest strip element (slide or mic) whose time is at or
         before ``second`` — it stays centred until the next element is reached."""
@@ -371,7 +379,10 @@ class FilmstripBar(QWidget):
 
     def _caption_for(self, item: dict) -> str:
         if item["kind"] == "mic":
-            return f"M - {_fmt(item['second'] * 1000)}"
+            start = _fmt(item["start_ms"])
+            if item.get("end_ms", 0) > item["start_ms"]:  # length known yet?
+                return f"M - {start} - {_fmt(item['end_ms'])}"
+            return f"M - {start}"
         return f"{item['name']} - {_fmt(item['second'] * 1000)}"
 
     def _clear(self) -> None:
@@ -639,6 +650,9 @@ class Player(QWidget):
         for seg in self._segments:
             seg.out.setVolume(mic_vol)
             seg.player.setPlaybackRate(self._rate)
+            # Mic length loads asynchronously -> refresh the strip caption (M - start
+            # - end) once it is known.
+            seg.player.durationChanged.connect(self._on_segment_duration)
 
         self.setWindowTitle(f"{APP_NAME} – {session.name}")
         # Show just the folder name (full path as tooltip) so a long path doesn't
@@ -667,10 +681,20 @@ class Player(QWidget):
             {"kind": "slide", "name": f.name, "second": f.second} for f in self._frames
         ]
         for seg in self._segments:
-            items.append({"kind": "mic", "second": seg.start_ms // 1000, "start_ms": seg.start_ms})
+            items.append({
+                "kind": "mic",
+                "second": seg.start_ms // 1000,
+                "start_ms": seg.start_ms,
+                "end_ms": seg.start_ms + seg.duration,  # 0 duration until it loads
+            })
         # Slide before mic when they share a second, so the marker sits to the right.
         items.sort(key=lambda it: (it["second"], 0 if it["kind"] == "slide" else 1))
         return items
+
+    def _on_segment_duration(self) -> None:
+        # A mic segment's length became known -> update captions (M - start - end)
+        # without disturbing which element is centred.
+        self._filmstrip.update_items(self._build_strip_items())
 
     # ----- slides -----
     def show_slide(self, name: str) -> None:
