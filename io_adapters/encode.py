@@ -151,6 +151,48 @@ def measure_loudness(path: Path) -> tuple[float | None, float | None]:
     return parse_loudnorm_json(proc.stderr or "")
 
 
+def _set_windows_creation_time(path: Path, epoch_seconds: float) -> None:
+    """Set a file's Windows creation timestamp (the stdlib only sets a/mtime)."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        # FILETIME = 100-ns ticks since 1601-01-01; epoch is 1970-01-01.
+        ticks = int(epoch_seconds * 10_000_000) + 116444736000000000
+        if ticks < 0:
+            return
+        filetime = wintypes.FILETIME(ticks & 0xFFFFFFFF, (ticks >> 32) & 0xFFFFFFFF)
+        kernel32 = ctypes.windll.kernel32
+        kernel32.CreateFileW.restype = ctypes.c_void_p
+        FILE_WRITE_ATTRIBUTES = 0x100
+        OPEN_EXISTING = 3
+        handle = kernel32.CreateFileW(str(path), FILE_WRITE_ATTRIBUTES, 0, None, OPEN_EXISTING, 0, None)
+        if not handle or handle == ctypes.c_void_p(-1).value:
+            return
+        try:
+            kernel32.SetFileTime(ctypes.c_void_p(handle), ctypes.byref(filetime), None, None)
+        finally:
+            kernel32.CloseHandle(ctypes.c_void_p(handle))
+    except Exception:
+        pass  # never let a timestamp tweak break the transcode
+
+
+def _copy_timestamps(src: Path, dst: Path) -> None:
+    """Carry the source file's timestamps over to ``dst`` so the MP3 keeps the
+    WAV's original date instead of the moment of conversion. On Windows the
+    creation time is copied too (st_ctime), not just access/modified."""
+    try:
+        st = src.stat()
+    except OSError:
+        return
+    try:
+        os.utime(dst, (st.st_atime, st.st_mtime))
+    except OSError:
+        pass
+    if os.name == "nt":
+        _set_windows_creation_time(dst, st.st_ctime)
+
+
 def transcode_to_mp3(
     wav_path: Path, bitrate: str = "96k", delete_wav: bool = True, gain_db: float = 0.0
 ) -> Path:
@@ -159,6 +201,9 @@ def transcode_to_mp3(
     ``gain_db`` (if non-zero) applies a volume adjustment during the transcode,
     used to loudness-match the system and mic tracks. Falls back to the original
     WAV (returned unchanged) if FFmpeg cannot be found or the transcode fails.
+
+    The MP3 inherits the WAV's timestamps (incl. the Windows creation date) so it
+    keeps the recording's date rather than the conversion time.
     """
     wav_path = Path(wav_path)
     ffmpeg = find_ffmpeg()
@@ -174,6 +219,8 @@ def transcode_to_mp3(
         subprocess.run(cmd, check=True, capture_output=True, creationflags=_NO_WINDOW)
     except (subprocess.CalledProcessError, OSError):
         return wav_path
+
+    _copy_timestamps(wav_path, mp3_path)  # while the WAV still exists
 
     if delete_wav:
         try:
