@@ -481,6 +481,38 @@ TRANSLATIONS: dict[str, dict] = {
     "player.delete_body": _t("'{name}' wirklich löschen?", "Really delete '{name}'?", "Supprimer vraiment '{name}' ?",
                              "¿Eliminar realmente '{name}'?", "Eliminare davvero '{name}'?", "Apagar mesmo '{name}'?",
                              "'{name}' echt verwijderen?", "Na pewno usunąć '{name}'?", "'{name}' gerçekten silinsin mi?"),
+    "player.discard_here": _t(
+        "Aufnahme ab aktueller Zeit verwerfen ({time})",
+        "Discard recording from current time ({time})",
+        "Supprimer l'enregistrement à partir de l'instant actuel ({time})",
+        "Descartar la grabación desde el momento actual ({time})",
+        "Scarta la registrazione dall'istante attuale ({time})",
+        "Descartar a gravação a partir do instante atual ({time})",
+        "Opname vanaf huidige tijd verwerpen ({time})",
+        "Odrzuć nagranie od bieżącego czasu ({time})",
+        "Kaydı geçerli andan itibaren sil ({time})"),
+    "player.discard_title": _t("Aufnahme kürzen?", "Trim recording?", "Raccourcir l'enregistrement ?",
+                               "¿Recortar la grabación?", "Accorciare la registrazione?", "Encurtar a gravação?",
+                               "Opname inkorten?", "Przyciąć nagranie?", "Kayıt kısaltılsın mı?"),
+    "player.discard_body": _t(
+        "System-Spur ab {time} verwerfen? Sie wird gekürzt und {n} Mikro-Segmente ab dieser Zeit werden "
+        "endgültig gelöscht. Das kann nicht rückgängig gemacht werden.",
+        "Discard the system track from {time} on? It will be trimmed and {n} mic segments from that time on "
+        "will be permanently deleted. This cannot be undone.",
+        "Supprimer la piste système à partir de {time} ? Elle sera raccourcie et {n} segments micro à partir "
+        "de cet instant seront définitivement supprimés. Action irréversible.",
+        "¿Descartar la pista del sistema a partir de {time}? Se recortará y se eliminarán definitivamente {n} "
+        "segmentos de micrófono a partir de ese momento. Esta acción no se puede deshacer.",
+        "Scartare la traccia di sistema da {time} in poi? Verrà accorciata e {n} segmenti microfono da quel "
+        "momento saranno eliminati definitivamente. Operazione irreversibile.",
+        "Descartar a faixa do sistema a partir de {time}? Ela será encurtada e {n} segmentos de microfone a "
+        "partir desse momento serão eliminados definitivamente. Não pode ser desfeito.",
+        "Systeemspoor vanaf {time} verwerpen? Het wordt ingekort en {n} microfoonsegmenten vanaf dat moment "
+        "worden definitief verwijderd. Dit kan niet ongedaan worden gemaakt.",
+        "Odrzucić ścieżkę systemową od {time}? Zostanie przycięta, a {n} segmentów mikrofonu od tego czasu "
+        "zostanie trwale usuniętych. Tej operacji nie można cofnąć.",
+        "Sistem kaydı {time} itibarıyla silinsin mi? Kırpılacak ve o andan itibaren {n} mikrofon segmenti "
+        "kalıcı olarak silinecek. Bu geri alınamaz."),
     "player.delete_seg_title": _t("Mikro-Segment löschen?", "Delete mic segment?", "Supprimer le segment micro ?",
                                   "¿Eliminar segmento de micrófono?", "Eliminare segmento microfono?",
                                   "Apagar segmento de microfone?", "Microfoonsegment verwijderen?",

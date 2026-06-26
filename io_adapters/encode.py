@@ -193,6 +193,42 @@ def _copy_timestamps(src: Path, dst: Path) -> None:
         _set_windows_creation_time(dst, st.st_ctime)
 
 
+def trim_audio(path: Path, end_seconds: float) -> bool:
+    """Cut an audio file in place to ``[0, end_seconds]`` (lossless stream copy).
+
+    Used to discard an over-long tail (e.g. when the user forgot to stop the
+    recording). Returns True on success; on any failure the original is left
+    untouched. The original timestamps are preserved on the trimmed file.
+
+    Note: the caller must release any open handle on ``path`` first (on Windows a
+    file that a media player still has open cannot be replaced).
+    """
+    path = Path(path)
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None or end_seconds <= 0:
+        return False
+    tmp = path.with_name(f"{path.stem}_trim{path.suffix}")
+    cmd = [ffmpeg, "-y", "-i", str(path), "-t", f"{end_seconds:.3f}", "-c", "copy", str(tmp)]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, creationflags=_NO_WINDOW)
+    except (subprocess.CalledProcessError, OSError):
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False
+    _copy_timestamps(path, tmp)  # keep the recording's date, not now
+    try:
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False
+    return True
+
+
 def transcode_to_mp3(
     wav_path: Path, bitrate: str = "96k", delete_wav: bool = True, gain_db: float = 0.0
 ) -> Path:

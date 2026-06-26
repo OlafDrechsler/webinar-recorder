@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 import shutil
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -59,6 +60,7 @@ from core.mic_playback import parse_segment_start, segment_local_offset
 from core.playback import SEEK_STEP_MS, seek_target, speed_percent_values
 from core.settings import get_data_dir, get_player_volumes, set_player_volumes
 from core.slide_timeline import slide_for_second
+from io_adapters.encode import trim_audio
 from gui.branding import APP_NAME, app_icon
 from gui.icons import pause_icon, play_icon, skip_back_icon, skip_forward_icon
 from gui.work_area import WorkAreaWindow
@@ -756,6 +758,10 @@ class Player(QWidget):
         menu.addSeparator()
         act_move = menu.addAction(tr("sort.menu_move"))
         act_del = menu.addAction(tr("sort.menu_delete"))
+        menu.addSeparator()
+        # The time is shown in the label so it's clear the cut is at the PLAYHEAD,
+        # not at the current slide's timestamp.
+        act_discard = menu.addAction(tr("player.discard_here", time=_fmt(self._system.position())))
         chosen = menu.exec(QCursor.pos())
         if chosen == act_time:
             self._adjust_time()
@@ -763,6 +769,58 @@ class Player(QWidget):
             self._remove_current(move=True)
         elif chosen == act_del:
             self._remove_current(move=False)
+        elif chosen == act_discard:
+            self._discard_from_here()
+
+    def _discard_from_here(self) -> None:
+        """Trim the system track to the current playhead and permanently delete all
+        mic segments that start at or after it (irreversible; confirmed first)."""
+        if self._slides_dir is None:
+            return
+        t_ms = self._system.position()
+        session = self._slides_dir.parent
+        sys_track = _find_track(session, "system")
+        if sys_track is None or t_ms <= 0:
+            return
+        doomed = [s for s in self._segments if s.start_ms >= t_ms]
+        if QMessageBox.question(
+            self, tr("player.discard_title"),
+            tr("player.discard_body", time=_fmt(t_ms), n=len(doomed)),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        # Release every open handle before touching files (Windows locks them).
+        if self._is_playing():
+            self._toggle_play()
+        self._system.stop()
+        self._system.setSource(QUrl())
+        for s in self._segments:
+            s.dispose()
+        doomed_paths = [s.path for s in doomed]
+        self._segments = []
+        # Qt frees the file handles asynchronously, so wait until each file is
+        # writable before trimming/deleting it (otherwise the op silently fails).
+        self._wait_until_writable(sys_track)
+        trim_audio(sys_track, t_ms / 1000.0)
+        for p in doomed_paths:
+            self._wait_until_writable(p)
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        self.load_session(session)
+
+    def _wait_until_writable(self, path: Path, tries: int = 60) -> bool:
+        """Pump the event loop until ``path`` is no longer locked by a media player
+        (or a short timeout passes), so the following file op can succeed."""
+        for _ in range(tries):
+            QApplication.processEvents()
+            try:
+                with open(path, "r+b"):
+                    return True
+            except OSError:
+                time.sleep(0.025)
+        return False
 
     def _remove_current(self, move: bool) -> None:
         """Move (to _aussortiert) or delete the slide currently shown big."""
