@@ -481,6 +481,10 @@ TRANSLATIONS: dict[str, dict] = {
     "player.delete_body": _t("'{name}' wirklich löschen?", "Really delete '{name}'?", "Supprimer vraiment '{name}' ?",
                              "¿Eliminar realmente '{name}'?", "Eliminare davvero '{name}'?", "Apagar mesmo '{name}'?",
                              "'{name}' echt verwijderen?", "Na pewno usunąć '{name}'?", "'{name}' gerçekten silinsin mi?"),
+    "player.delete_seg_title": _t("Mikro-Segment löschen?", "Delete mic segment?", "Supprimer le segment micro ?",
+                                  "¿Eliminar segmento de micrófono?", "Eliminare segmento microfono?",
+                                  "Apagar segmento de microfone?", "Microfoonsegment verwijderen?",
+                                  "Usunąć segment mikrofonu?", "Mikrofon segmenti silinsin mi?"),
 }
 
 

@@ -399,6 +399,7 @@ class FilmstripBar(QWidget):
 class MicSegment:
     def __init__(self, start_sec: int, path: Path) -> None:
         self.start_ms = start_sec * 1000
+        self.path = path
         self.duration = 0
         self.out = QAudioOutput()
         self.player = QMediaPlayer()
@@ -805,8 +806,16 @@ class Player(QWidget):
 
     # ----- film-strip context menu -----
     def _show_frame_menu(self, item: dict) -> None:
-        if item["kind"] != "slide":
-            return  # mic markers have no edit/delete menu
+        if item["kind"] == "mic":
+            menu = QMenu(self)
+            act_move = menu.addAction(tr("sort.menu_move"))
+            act_del = menu.addAction(tr("sort.menu_delete"))
+            chosen = menu.exec(QCursor.pos())
+            if chosen == act_move:
+                self._remove_segment(item["start_ms"], move=True)
+            elif chosen == act_del:
+                self._remove_segment(item["start_ms"], move=False)
+            return
         name = item["name"]
         menu = QMenu(self)
         act_edit = menu.addAction(tr("common.edit"))
@@ -816,6 +825,39 @@ class Player(QWidget):
             self._edit_frame(name)
         elif chosen == act_del:
             self._delete_frame(name)
+
+    def _remove_segment(self, start_ms: int, move: bool) -> None:
+        """Move (to mikro/_aussortiert) or delete a mic segment file, then refresh
+        the segment list and the film strip."""
+        seg = next((s for s in self._segments if s.start_ms == start_ms), None)
+        if seg is None:
+            return
+        path = seg.path
+        if not move:
+            if QMessageBox.question(
+                self, tr("player.delete_seg_title"), tr("player.delete_body", name=path.name),
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            ) != QMessageBox.Yes:
+                return
+        # Release the file handle before touching the file (Windows locks it).
+        seg.dispose()
+        self._segments.remove(seg)
+        if move:
+            dest = path.parent / "_aussortiert"
+            dest.mkdir(exist_ok=True)
+            try:
+                shutil.move(str(path), str(dest / path.name))
+            except OSError:
+                pass
+        else:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        self._rebuild_segment_menu()
+        self._filmstrip.set_session(self._slides_dir, self._build_strip_items())
+        if self._current_slide:
+            self._filmstrip.set_current_slide(self._current_slide)
 
     def _edit_frame(self, name: str) -> None:
         """Edit the named image in place (overwrites the same file)."""
