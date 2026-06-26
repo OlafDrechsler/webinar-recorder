@@ -32,7 +32,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtCore import QSize, QTimer, QUrl, Qt, Signal
+from PySide6.QtCore import QEventLoop, QObject, QSize, QThread, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QPainter, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
     QLayout,
     QMenu,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -80,6 +81,44 @@ def _find_track(session: Path, stem: str) -> Path | None:
 def _fmt(ms: int) -> str:
     s = max(0, ms) // 1000
     return f"{s // 60:02d}:{s % 60:02d}"
+
+
+def _wait_file_writable(path: Path, tries: int = 80) -> bool:
+    """Retry until ``path`` is no longer locked by a media player, or time out.
+
+    Used from a worker thread (no Qt calls): the main thread's event loop runs the
+    progress dialog and lets Qt release the handle while we poll here."""
+    for _ in range(tries):
+        try:
+            with open(path, "r+b"):
+                return True
+        except OSError:
+            time.sleep(0.025)
+    return False
+
+
+class _DiscardWorker(QObject):
+    """Trims the system track and deletes the trailing mic files off the GUI
+    thread, so the window stays responsive during the FFmpeg call."""
+
+    finished = Signal()
+
+    def __init__(self, sys_track: Path, end_seconds: float, doomed_paths: list[Path]) -> None:
+        super().__init__()
+        self._sys_track = sys_track
+        self._end_seconds = end_seconds
+        self._doomed = doomed_paths
+
+    def run(self) -> None:
+        _wait_file_writable(self._sys_track)
+        trim_audio(self._sys_track, self._end_seconds)
+        for p in self._doomed:
+            _wait_file_writable(p)
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        self.finished.emit()
 
 
 def _rename_second(name: str, new_second: int) -> str:
@@ -789,7 +828,9 @@ class Player(QWidget):
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         ) != QMessageBox.Yes:
             return
-        # Release every open handle before touching files (Windows locks them).
+        # Release every open handle before touching files (Windows locks them);
+        # Qt frees them asynchronously, so the actual trim/delete runs in a worker
+        # while a progress dialog keeps the window responsive.
         if self._is_playing():
             self._toggle_play()
         self._system.stop()
@@ -798,29 +839,31 @@ class Player(QWidget):
             s.dispose()
         doomed_paths = [s.path for s in doomed]
         self._segments = []
-        # Qt frees the file handles asynchronously, so wait until each file is
-        # writable before trimming/deleting it (otherwise the op silently fails).
-        self._wait_until_writable(sys_track)
-        trim_audio(sys_track, t_ms / 1000.0)
-        for p in doomed_paths:
-            self._wait_until_writable(p)
-            try:
-                p.unlink()
-            except OSError:
-                pass
+        self._run_with_progress(
+            tr("player.trimming"),
+            _DiscardWorker(sys_track, t_ms / 1000.0, doomed_paths),
+        )
         self.load_session(session)
 
-    def _wait_until_writable(self, path: Path, tries: int = 60) -> bool:
-        """Pump the event loop until ``path`` is no longer locked by a media player
-        (or a short timeout passes), so the following file op can succeed."""
-        for _ in range(tries):
-            QApplication.processEvents()
-            try:
-                with open(path, "r+b"):
-                    return True
-            except OSError:
-                time.sleep(0.025)
-        return False
+    def _run_with_progress(self, label: str, worker: "QObject") -> None:
+        """Run ``worker.run`` on a thread while a busy progress dialog is shown, so
+        the GUI stays responsive (and Qt can release file handles) meanwhile."""
+        dlg = QProgressDialog(label, None, 0, 0, self)  # 0..0 = busy/marquee
+        dlg.setWindowTitle(tr("progress.wait_title"))
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setCancelButton(None)
+        dlg.setMinimumDuration(0)
+        dlg.show()
+        thread = QThread()
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        loop = QEventLoop()
+        worker.finished.connect(loop.quit)
+        worker.finished.connect(thread.quit)
+        thread.start()
+        loop.exec()
+        thread.wait()
+        dlg.close()
 
     def _remove_current(self, move: bool) -> None:
         """Move (to _aussortiert) or delete the slide currently shown big."""
@@ -1053,6 +1096,10 @@ class Player(QWidget):
 
     def _on_duration(self, ms: int) -> None:
         self._slider.setRange(0, ms)
+        # Show the (new) total length as soon as it's known, before playback even
+        # starts — both when opening a webinar and after trimming the track.
+        if not self._slider.isSliderDown():
+            self._time.setText(f"{_fmt(self._system.position())} / {_fmt(ms)}")
 
     def _on_position(self, ms: int) -> None:
         if not self._slider.isSliderDown():
@@ -1115,9 +1162,20 @@ class Player(QWidget):
     def closeEvent(self, event) -> None:  # noqa: N802
         # Stop all playback when the window closes; otherwise the audio keeps
         # running (the master player lives on) until the whole hub quits.
+        #
+        # Detach the position/duration signals FIRST: stopping a playing track
+        # emits positionChanged, which would re-enter _on_position -> _sync_segments
+        # across every mic segment while we are tearing them down — that cascade
+        # froze the window ("not responding") when closing during playback.
+        try:
+            self._system.positionChanged.disconnect(self._on_position)
+            self._system.durationChanged.disconnect(self._on_duration)
+        except (RuntimeError, TypeError):
+            pass
         self._system.stop()
+        self._system.setSource(QUrl())
         for seg in self._segments:
-            seg.player.stop()
+            seg.dispose()
         super().closeEvent(event)
 
 
@@ -1125,6 +1183,10 @@ def open_player(session: Path | None = None) -> Player:
     """Create and show a player window (for the hub / in-process use)."""
     win = Player(session)
     win.setWindowIcon(app_icon())
+    # Destroy on close (like the recorder) so the hub opens a fresh player next
+    # time instead of re-showing a torn-down one — and the media objects are
+    # released cleanly rather than lingering hidden.
+    win.setAttribute(Qt.WA_DeleteOnClose, True)
     win.resize(960, 760)
     win.show()
     return win
