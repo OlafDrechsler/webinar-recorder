@@ -947,7 +947,9 @@ class Player(QWidget):
         else:
             dur = self._system.duration() // 1000
             hi = max(cur, dur if dur > 0 else cur + 600)
-        if lo > hi:
+        # The range always contains the current second, so it is never empty
+        # (lo > hi can't happen) — "no room" is when it contains ONLY that value.
+        if lo == hi:
             QMessageBox.information(self, tr("player.adjust_time"), tr("time.no_room"))
             return
         dlg = _TimeAdjustDialog(self, name, cur, lo, hi)
