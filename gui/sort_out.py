@@ -50,6 +50,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.i18n import tr
 from core.settings import get_data_dir, get_sortout_config, set_sortout_config
 from gui.branding import APP_NAME, app_icon
+from gui.dialogs import ask_yes_no
 from core.slide_dedupe import (
     COMPARE,
     ELLIPSE,
@@ -540,7 +541,8 @@ class SortOutWindow(QWidget):
             self._refresh_ref()
 
     def _show_image_menu(self) -> None:
-        """Right-click on the big image: move or delete (runs with that action)."""
+        """Right-click on the big image: move or delete THE SHOWN slide only
+        (manual sorting while browsing — this never starts the automatic run)."""
         if self._running or not self._paths:
             return
         menu = QMenu(self)
@@ -548,13 +550,34 @@ class SortOutWindow(QWidget):
         act_del = menu.addAction(tr("sort.menu_delete"))
         chosen = menu.exec(QCursor.pos())
         if chosen == act_move:
-            self._action = "move"
-            self._refresh_mode_labels()
-            self._run()
+            self._remove_ref(move=True)
         elif chosen == act_del:
-            self._action = "delete"
-            self._refresh_mode_labels()
-            self._run()
+            self._remove_ref(move=False)
+
+    def _remove_ref(self, move: bool) -> None:
+        """Move (to _aussortiert) or permanently delete the reference image, then
+        drop it from the browse list and the film strip."""
+        path = self._paths[self._ref_index]
+        if move:
+            dest = self._folder / "_aussortiert"
+            dest.mkdir(exist_ok=True)
+            try:
+                shutil.move(str(path), str(dest / path.name))
+            except OSError:
+                return
+        else:
+            if not ask_yes_no(self, tr("player.delete_title"),
+                              tr("player.delete_body", name=path.name)):
+                return
+            try:
+                path.unlink()
+            except OSError:
+                return
+        self._paths.pop(self._ref_index)
+        if self._ref_index >= len(self._paths):
+            self._ref_index = max(0, len(self._paths) - 1)
+        self._refresh_ref()
+        self._filmstrip.set_session(self._paths)
 
     def _step_ref(self, delta: int) -> None:
         if not self._paths:
@@ -679,10 +702,7 @@ class SortOutWindow(QWidget):
             QMessageBox.information(self, tr("sort.nothing_title"), tr("sort.nothing_body"))
             return
         if self._action == "delete":
-            if QMessageBox.question(
-                self, tr("sort.delete_confirm_title"), tr("sort.delete_confirm_body"),
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-            ) != QMessageBox.Yes:
+            if not ask_yes_no(self, tr("sort.delete_confirm_title"), tr("sort.delete_confirm_body")):
                 return
         set_sortout_config(self._config_dict())
         self._mask = mask

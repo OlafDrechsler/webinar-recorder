@@ -36,6 +36,8 @@ def _t(de, en, fr=None, es=None, it=None, pt=None, nl=None, pl=None, tr_=None) -
 
 TRANSLATIONS: dict[str, dict] = {
     # --- common ---
+    "common.yes": _t("Ja", "Yes", "Oui", "Sí", "Sì", "Sim", "Ja", "Tak", "Evet"),
+    "common.no": _t("Nein", "No", "Non", "No", "No", "Não", "Nee", "Nie", "Hayır"),
     "common.close": _t("Schließen", "Close", "Fermer", "Cerrar", "Chiudi", "Fechar", "Sluiten", "Zamknij", "Kapat"),
     "common.cancel": _t("Abbrechen", "Cancel", "Annuler", "Cancelar", "Annulla", "Cancelar", "Annuleren", "Anuluj", "İptal"),
     "common.next": _t("Weiter", "Continue", "Continuer", "Continuar", "Continua", "Continuar", "Doorgaan", "Dalej", "Devam"),

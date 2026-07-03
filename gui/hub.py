@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -26,6 +25,7 @@ from PySide6.QtWidgets import (
 import app as recorder
 from core.i18n import LANGUAGES, current_language, set_current_language, tr
 from gui.branding import APP_NAME, app_icon
+from gui.dialogs import ask_yes_no
 from gui.sort_out import open_sorter
 from player.play import open_player
 
@@ -139,10 +139,7 @@ class HubWindow(QWidget):
     def closeEvent(self, event) -> None:  # noqa: N802
         rec = self._open.get("record")
         if rec is not None and getattr(rec, "_recording", False):
-            if QMessageBox.question(
-                self, APP_NAME, tr("hub.quit_while_recording"),
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-            ) != QMessageBox.Yes:
+            if not ask_yes_no(self, APP_NAME, tr("hub.quit_while_recording")):
                 event.ignore()
                 return
         QApplication.instance().quit()

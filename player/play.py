@@ -63,6 +63,7 @@ from core.settings import get_data_dir, get_player_volumes, set_player_volumes
 from core.slide_timeline import slide_for_second
 from io_adapters.encode import trim_audio
 from gui.branding import APP_NAME, app_icon
+from gui.dialogs import ask_yes_no
 from gui.icons import pause_icon, play_icon, skip_back_icon, skip_forward_icon
 from gui.work_area import WorkAreaWindow
 
@@ -850,11 +851,10 @@ class Player(QWidget):
         if sys_track is None or t_ms <= 0:
             return
         doomed = [s for s in self._segments if s.start_ms >= t_ms]
-        if QMessageBox.question(
+        if not ask_yes_no(
             self, tr("player.discard_title"),
             tr("player.discard_body", time=_fmt(t_ms), n=len(doomed)),
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        ) != QMessageBox.Yes:
+        ):
             return
         # Release every open handle before touching files (Windows locks them);
         # Qt frees them asynchronously, so the actual trim/delete runs in a worker
@@ -919,10 +919,7 @@ class Player(QWidget):
             except OSError:
                 return
         else:
-            if QMessageBox.question(
-                self, tr("player.delete_title"), tr("player.delete_body", name=name),
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-            ) != QMessageBox.Yes:
+            if not ask_yes_no(self, tr("player.delete_title"), tr("player.delete_body", name=name)):
                 return
             try:
                 src.unlink()
@@ -1001,10 +998,7 @@ class Player(QWidget):
             return
         path = seg.path
         if not move:
-            if QMessageBox.question(
-                self, tr("player.delete_seg_title"), tr("player.delete_body", name=path.name),
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-            ) != QMessageBox.Yes:
+            if not ask_yes_no(self, tr("player.delete_seg_title"), tr("player.delete_body", name=path.name)):
                 return
         # Release the file handle before touching the file (Windows locks it);
         # Qt frees it asynchronously, so pump events until the file is writable.
@@ -1047,10 +1041,7 @@ class Player(QWidget):
     def _delete_frame(self, name: str) -> None:
         if self._slides_dir is None:
             return
-        if QMessageBox.question(
-            self, tr("player.delete_title"), tr("player.delete_body", name=name),
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        ) != QMessageBox.Yes:
+        if not ask_yes_no(self, tr("player.delete_title"), tr("player.delete_body", name=name)):
             return
         try:
             (self._slides_dir / name).unlink()
