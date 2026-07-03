@@ -130,6 +130,48 @@ def _rename_second(name: str, new_second: int) -> str:
     return f"{new_second:05d}{m.group(2)}"
 
 
+def merge_strip_items(frames, mics: list[tuple[int, int]]) -> list[dict]:
+    """Merge slide frames and mic segments ``(start_ms, end_ms)`` into the ordered
+    film-strip item list. A slide sorts before a mic marker of the same second,
+    so the marker sits to its right. ``end_ms == start_ms`` means "length not
+    known yet" (the caption then shows only the start time)."""
+    items: list[dict] = [
+        {"kind": "slide", "name": f.name, "second": f.second} for f in frames
+    ]
+    for start_ms, end_ms in mics:
+        items.append({
+            "kind": "mic",
+            "second": start_ms // 1000,
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+        })
+    items.sort(key=lambda it: (it["second"], 0 if it["kind"] == "slide" else 1))
+    return items
+
+
+def latest_index_at_or_before(items: list[dict], second: int) -> int | None:
+    """Index of the last strip item whose second is <= ``second``, or None when
+    ``second`` lies before every item. Items must be sorted ascending by second."""
+    idx = None
+    for i, it in enumerate(items):
+        if it["second"] <= second:
+            idx = i
+        else:
+            break
+    return idx
+
+
+def strip_caption(item: dict) -> str:
+    """Caption under a film-strip cell: ``name - mm:ss`` for a slide,
+    ``M - start - end`` for a mic marker (only ``M - start`` while loading)."""
+    if item["kind"] == "mic":
+        start = _fmt(item["start_ms"])
+        if item.get("end_ms", 0) > item["start_ms"]:
+            return f"M - {start} - {_fmt(item['end_ms'])}"
+        return f"M - {start}"
+    return f"{item['name']} - {_fmt(item['second'] * 1000)}"
+
+
 _TRANSPORT_BTN = (
     "QPushButton{background:#2a2a2a;border:none;border-radius:6px;padding:4px 12px;}"
     "QPushButton:hover{background:#3a3a3a;}"
@@ -368,12 +410,7 @@ class FilmstripBar(QWidget):
     def set_current_for_second(self, second: int) -> None:
         """Centre the latest strip element (slide or mic) whose time is at or
         before ``second`` — it stays centred until the next element is reached."""
-        idx = None
-        for i, it in enumerate(self._items):  # items are sorted ascending by second
-            if it["second"] <= second:
-                idx = i
-            else:
-                break
+        idx = latest_index_at_or_before(self._items, second)
         if idx is not None and idx != self._current:
             self._current = idx
             self._rebuild()
@@ -419,12 +456,7 @@ class FilmstripBar(QWidget):
         return self._mic_pixmap() if item["kind"] == "mic" else self._thumb(item["name"])
 
     def _caption_for(self, item: dict) -> str:
-        if item["kind"] == "mic":
-            start = _fmt(item["start_ms"])
-            if item.get("end_ms", 0) > item["start_ms"]:  # length known yet?
-                return f"M - {start} - {_fmt(item['end_ms'])}"
-            return f"M - {start}"
-        return f"{item['name']} - {_fmt(item['second'] * 1000)}"
+        return strip_caption(item)
 
     def _clear(self) -> None:
         while self._row.count():
@@ -443,8 +475,10 @@ class FilmstripBar(QWidget):
                 continue
             item = self._items[idx]
             cell = _Cell(idx, self._pixmap_for(item), self._caption_for(item), idx == self._current)
-            cell.clicked.connect(lambda i: self.frame_clicked.emit(self._items[i]))
-            cell.context.connect(lambda i: self.frame_context.emit(self._items[i]))
+            # Bind the item itself (not the index): a stale cell that is still
+            # around during a rebuild can then never hit a shifted/shorter list.
+            cell.clicked.connect(lambda _i, it=item: self.frame_clicked.emit(it))
+            cell.context.connect(lambda _i, it=item: self.frame_context.emit(it))
             self._row.addWidget(cell)
 
 
@@ -718,19 +752,10 @@ class Player(QWidget):
         """Merge slide frames and mic segments into one ordered strip. Mic markers
         are rendered as a white 'M' cell; they are NOT slides, so the slide before
         a mic segment keeps showing during playback (the timeline has no mic)."""
-        items: list[dict] = [
-            {"kind": "slide", "name": f.name, "second": f.second} for f in self._frames
-        ]
-        for seg in self._segments:
-            items.append({
-                "kind": "mic",
-                "second": seg.start_ms // 1000,
-                "start_ms": seg.start_ms,
-                "end_ms": seg.start_ms + seg.duration,  # 0 duration until it loads
-            })
-        # Slide before mic when they share a second, so the marker sits to the right.
-        items.sort(key=lambda it: (it["second"], 0 if it["kind"] == "slide" else 1))
-        return items
+        return merge_strip_items(
+            self._frames,
+            [(seg.start_ms, seg.start_ms + seg.duration) for seg in self._segments],
+        )
 
     def _on_segment_duration(self) -> None:
         # A mic segment's length became known -> update captions (M - start - end)
@@ -799,8 +824,11 @@ class Player(QWidget):
         act_del = menu.addAction(tr("sort.menu_delete"))
         menu.addSeparator()
         # The time is shown in the label so it's clear the cut is at the PLAYHEAD,
-        # not at the current slide's timestamp.
-        act_discard = menu.addAction(tr("player.discard_here", time=_fmt(self._system.position())))
+        # not at the current slide's timestamp. Snapshot it here so the action cuts
+        # at exactly the advertised time even if playback keeps running.
+        t_ms = self._system.position()
+        act_discard = menu.addAction(tr("player.discard_here", time=_fmt(t_ms)))
+        act_discard.setEnabled(t_ms > 0)
         chosen = menu.exec(QCursor.pos())
         if chosen == act_time:
             self._adjust_time()
@@ -809,14 +837,14 @@ class Player(QWidget):
         elif chosen == act_del:
             self._remove_current(move=False)
         elif chosen == act_discard:
-            self._discard_from_here()
+            self._discard_from_here(t_ms)
 
-    def _discard_from_here(self) -> None:
-        """Trim the system track to the current playhead and permanently delete all
-        mic segments that start at or after it (irreversible; confirmed first)."""
+    def _discard_from_here(self, t_ms: int) -> None:
+        """Trim the system track to ``t_ms`` (the playhead time shown in the menu)
+        and permanently delete all mic segments that start at or after it
+        (irreversible; confirmed first)."""
         if self._slides_dir is None:
             return
-        t_ms = self._system.position()
         session = self._slides_dir.parent
         sys_track = _find_track(session, "system")
         if sys_track is None or t_ms <= 0:
@@ -844,6 +872,18 @@ class Player(QWidget):
             _DiscardWorker(sys_track, t_ms / 1000.0, doomed_paths),
         )
         self.load_session(session)
+
+    def _pump_until_writable(self, path: Path, tries: int = 80) -> bool:
+        """GUI-thread variant of _wait_file_writable: pump the event loop so Qt can
+        release its (asynchronously freed) handle on ``path``, then retry."""
+        for _ in range(tries):
+            QApplication.processEvents()
+            try:
+                with open(path, "r+b"):
+                    return True
+            except OSError:
+                time.sleep(0.025)
+        return False
 
     def _run_with_progress(self, label: str, worker: "QObject") -> None:
         """Run ``worker.run`` on a thread while a busy progress dialog is shown, so
@@ -964,9 +1004,11 @@ class Player(QWidget):
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             ) != QMessageBox.Yes:
                 return
-        # Release the file handle before touching the file (Windows locks it).
+        # Release the file handle before touching the file (Windows locks it);
+        # Qt frees it asynchronously, so pump events until the file is writable.
         seg.dispose()
         self._segments.remove(seg)
+        self._pump_until_writable(path)
         if move:
             dest = path.parent / "_aussortiert"
             dest.mkdir(exist_ok=True)
