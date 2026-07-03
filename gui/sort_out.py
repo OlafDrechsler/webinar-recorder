@@ -145,6 +145,14 @@ class SortFilmstrip(QWidget):
             self._center = max(0, min(seq_len - 1, self._effective_center() + delta))
             self.update()
 
+    def center_on(self, frame_index: int) -> None:
+        """Centre the cell showing ``frame_index`` (used while browsing, so the
+        strip follows the big reference image)."""
+        seq = self._seq()
+        if frame_index in seq:
+            self._center = seq.index(frame_index)
+            self.update()
+
     # ----- transitions (re-follow the baseline) -----
     def mark_discard(self) -> None:
         self._discard_pending = True
@@ -578,12 +586,14 @@ class SortOutWindow(QWidget):
             self._ref_index = max(0, len(self._paths) - 1)
         self._refresh_ref()
         self._filmstrip.set_session(self._paths)
+        self._filmstrip.center_on(self._ref_index)  # keep the shown slide centred
 
     def _step_ref(self, delta: int) -> None:
         if not self._paths:
             return
         self._ref_index = (self._ref_index + delta) % len(self._paths)
         self._refresh_ref()
+        self._filmstrip.center_on(self._ref_index)  # strip follows the big image
 
     def _refresh_ref(self) -> None:
         if not self._paths:
