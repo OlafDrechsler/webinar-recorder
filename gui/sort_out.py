@@ -479,7 +479,7 @@ class SortOutWindow(QWidget):
         self._action_btn.clicked.connect(self._toggle_action)
         self._run_btn = QPushButton(tr("common.start"))
         self._run_btn.setStyleSheet("font-weight: bold; padding: 6px;")
-        self._run_btn.clicked.connect(self._run)
+        self._run_btn.clicked.connect(self._on_run_clicked)
         action_row = QHBoxLayout()
         action_row.addWidget(self._action_btn)
         action_row.addStretch(1)
@@ -704,6 +704,27 @@ class SortOutWindow(QWidget):
             self._baseline_frame = load_frame(self._paths[idx])
         return self._baseline_frame
 
+    def _on_run_clicked(self) -> None:
+        """The one button is Start outside a run and ABBRECHEN during one."""
+        if self._running:
+            self._cancel_run()
+        else:
+            self._run()
+
+    def _cancel_run(self) -> None:
+        """Abort the run without applying anything: removals are only executed in
+        _finish, so cancelling simply drops the collected list."""
+        self._running = False
+        self._paused = False
+        self._step_timer.stop()
+        self._removals = []
+        self._set_run_ui(False)
+        self._filmstrip.set_session(self._paths)  # back to browse view
+        self._ref_index = min(self._ref_index, max(0, len(self._paths) - 1))
+        self._refresh_ref()
+        self._filmstrip.center_on(self._ref_index)
+        self._status.setText(tr("sort.cancelled"))
+
     def _run(self) -> None:
         if self._running:
             return
@@ -725,7 +746,15 @@ class SortOutWindow(QWidget):
         self._running = True
         self._paused = False
         self._set_run_ui(True)
+        self._show_baseline_big()  # first reference = first slide
         self._schedule()
+
+    def _show_baseline_big(self) -> None:
+        """Show the current baseline (reference) slide as the big image."""
+        idx = self._filmstrip.baseline_index()
+        if idx is not None and 0 <= idx < len(self._paths):
+            self._ref_index = idx
+            self._refresh_ref()
 
     def _schedule(self) -> None:
         if self._running and not self._paused:
@@ -743,6 +772,7 @@ class SortOutWindow(QWidget):
             if masked_frames_differ(base, cand, self._mask, fraction_threshold=self._fraction_val):
                 self._filmstrip.rebaseline()  # new baseline
                 self._baseline_idx = None
+                self._show_baseline_big()     # the new reference appears big
                 self._next_phase = "compare"
             else:
                 self._filmstrip.mark_discard()  # red frame, eject after the delay
@@ -773,6 +803,7 @@ class SortOutWindow(QWidget):
             return
         self._filmstrip.rebaseline()
         self._baseline_idx = None
+        self._show_baseline_big()
         self._next_phase = "compare"
         if not self._filmstrip.has_candidate():
             self._finish()
@@ -791,11 +822,14 @@ class SortOutWindow(QWidget):
         self._discard_btn.setVisible(visible)
 
     def _set_run_ui(self, running: bool) -> None:
-        self._run_btn.setEnabled(not running)
+        # The Start button stays enabled: during a run it turns into ABBRECHEN.
+        self._run_btn.setText(tr("sort.cancel_run") if running else tr("common.start"))
         self._action_btn.setEnabled(not running)
         self._folder_btn.setEnabled(not running)
         self._pause_btn.setVisible(running)
-        if not running:
+        if running:
+            self._pause_btn.setText(tr("sort.pause"))
+        else:
             self._set_override_visible(False)
 
     def _finish(self) -> None:
