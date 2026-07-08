@@ -1,10 +1,10 @@
 """Pure-logic tests for player/play.py helpers (no QApplication needed)."""
 
 from core.filmstrip import build_filmstrip
+from gui.slide_ops import rename_second as _rename_second
 from player.play import (
     _find_track,
     _fmt,
-    _rename_second,
     _wait_file_writable,
     latest_index_at_or_before,
     merge_strip_items,

@@ -76,31 +76,38 @@ def _normalize_and_transcode(system_wav: Path, mic_segments: list[Path], progres
     relative dynamics stay intact while their overall loudness matches the system
     track. Measuring happens before transcode because transcode deletes the WAV.
 
-    ``progress(label, done, total)`` is called before each step for the UI.
+    ``progress(label, done, total)`` is called before each step for the UI. Each
+    track has two heavy phases — analyse (loudness) and convert — that are reported
+    separately, because on a multi-hour system track each one takes a long time and
+    it should be clear which is running.
     """
-    total = 1 + len(mic_segments)
+    n = len(mic_segments)
+    total = 2 + 2 * n  # analyse + convert for the system track and each mic segment
+    counter = {"done": 0}
 
-    def step(label: str, done: int) -> None:
+    def step(label: str) -> None:
+        counter["done"] += 1
         if progress is not None:
-            progress(label, done, total)
+            progress(label, counter["done"], total)
 
-    step(tr("progress.system"), 0)
+    step(tr("progress.system_analyze"))
     sys_lufs, sys_tp = measure_loudness(system_wav)
+    step(tr("progress.system"))
     transcode_to_mp3(system_wav, gain_db=compute_gain_db(sys_lufs, sys_tp))
 
-    n = len(mic_segments)
     if n:
         measured = []
         for i, seg in enumerate(mic_segments):
-            step(tr("progress.analyze_seg", i=i + 1, n=n), 1)
+            step(tr("progress.analyze_seg", i=i + 1, n=n))
             measured.append(measure_loudness(seg))
         mic_lufs = aggregate_mean_db([lufs for lufs, _ in measured])
         peaks = [tp for _, tp in measured if tp is not None]
         mic_gain = compute_gain_db(mic_lufs, max(peaks) if peaks else None)
         for i, seg in enumerate(mic_segments):
-            step(tr("progress.convert_seg", i=i + 1, n=n), 1 + i)
+            step(tr("progress.convert_seg", i=i + 1, n=n))
             transcode_to_mp3(seg, gain_db=mic_gain)
-    step(tr("progress.done"), total)
+    if progress is not None:
+        progress(tr("progress.done"), total, total)
 
 
 class _TranscodeWorker(QObject):

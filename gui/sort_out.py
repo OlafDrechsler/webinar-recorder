@@ -51,6 +51,7 @@ from core.i18n import tr
 from core.settings import get_data_dir, get_sortout_config, set_sortout_config
 from gui.branding import APP_NAME, app_icon
 from gui.dialogs import ask_yes_no
+from gui.slide_ops import adjust_slide_time, delete_slide, move_slide, slide_second
 from core.slide_dedupe import (
     COMPARE,
     ELLIPSE,
@@ -98,7 +99,8 @@ class SortFilmstrip(QWidget):
     GAP = 8
     CAP_H = 16
 
-    frame_clicked = Signal(int)  # index into the frames list
+    frame_clicked = Signal(int)  # left click: index into the frames list
+    frame_context = Signal(int)  # right click: index into the frames list
 
     def __init__(self) -> None:
         super().__init__()
@@ -180,7 +182,10 @@ class SortFilmstrip(QWidget):
         step = self.THUMB_W + self.GAP
         pos = self._effective_center() + round((event.position().x() - self.width() / 2) / step)
         if 0 <= pos < len(seq):
-            self.frame_clicked.emit(seq[pos])
+            if event.button() == Qt.RightButton:
+                self.frame_context.emit(seq[pos])
+            else:
+                self.frame_clicked.emit(seq[pos])
 
     # ----- rendering -----
     def _thumb(self, idx: int) -> QPixmap | None:
@@ -437,6 +442,7 @@ class SortOutWindow(QWidget):
         # Animated film strip with paging arrows + run controls.
         self._filmstrip = SortFilmstrip()
         self._filmstrip.frame_clicked.connect(self._on_strip_click)
+        self._filmstrip.frame_context.connect(self._slide_menu_at)
         strip_left = QPushButton("‹")
         strip_left.setFixedWidth(28)
         strip_left.setAutoRepeat(True)
@@ -549,44 +555,55 @@ class SortOutWindow(QWidget):
             self._refresh_ref()
 
     def _show_image_menu(self) -> None:
-        """Right-click on the big image: move or delete THE SHOWN slide only
-        (manual sorting while browsing — this never starts the automatic run)."""
-        if self._running or not self._paths:
+        """Right-click on the big image: act on THE SHOWN slide."""
+        self._slide_menu_at(self._ref_index)
+
+    def _slide_menu_at(self, index: int) -> None:
+        """Context menu for a slide (big image or film strip): adjust its time,
+        move it aside or delete it — only that slide, never starting the auto run."""
+        if self._running or not (0 <= index < len(self._paths)):
             return
         menu = QMenu(self)
+        act_time = menu.addAction(tr("player.adjust_time"))
+        menu.addSeparator()
         act_move = menu.addAction(tr("sort.menu_move"))
         act_del = menu.addAction(tr("sort.menu_delete"))
         chosen = menu.exec(QCursor.pos())
-        if chosen == act_move:
-            self._remove_ref(move=True)
+        if chosen == act_time:
+            self._adjust_slide_time_at(index)
+        elif chosen == act_move:
+            self._remove_slide_at(index, move=True)
         elif chosen == act_del:
-            self._remove_ref(move=False)
+            self._remove_slide_at(index, move=False)
 
-    def _remove_ref(self, move: bool) -> None:
-        """Move (to _aussortiert) or permanently delete the reference image, then
-        drop it from the browse list and the film strip."""
-        path = self._paths[self._ref_index]
-        if move:
-            dest = self._folder / "_aussortiert"
-            dest.mkdir(exist_ok=True)
-            try:
-                shutil.move(str(path), str(dest / path.name))
-            except OSError:
-                return
-        else:
-            if not ask_yes_no(self, tr("player.delete_title"),
-                              tr("player.delete_body", name=path.name)):
-                return
-            try:
-                path.unlink()
-            except OSError:
-                return
-        self._paths.pop(self._ref_index)
-        if self._ref_index >= len(self._paths):
-            self._ref_index = max(0, len(self._paths) - 1)
+    def _reload_showing(self, name: str) -> None:
+        """Reload the auto-frame list and keep ``name`` shown/centred if it still
+        exists, otherwise clamp the reference index into the shortened list."""
+        self._paths = auto_frames(self._folder)
+        idx = next((i for i, p in enumerate(self._paths) if p.name == name), None)
+        self._ref_index = idx if idx is not None else min(self._ref_index, max(0, len(self._paths) - 1))
         self._refresh_ref()
         self._filmstrip.set_session(self._paths)
-        self._filmstrip.center_on(self._ref_index)  # keep the shown slide centred
+        self._filmstrip.center_on(self._ref_index)
+
+    def _remove_slide_at(self, index: int, move: bool) -> None:
+        name = self._paths[index].name
+        shown = self._paths[self._ref_index].name  # keep this one shown if it survives
+        if move:
+            if not move_slide(self._folder, name):
+                return
+        else:
+            if not delete_slide(self, self._folder, name):
+                return
+        self._reload_showing(shown)
+
+    def _adjust_slide_time_at(self, index: int) -> None:
+        name = self._paths[index].name
+        occupied = {slide_second(p.name) for p in self._folder.glob("*.png")}
+        occupied.discard(None)
+        new_name = adjust_slide_time(self, self._folder, name, occupied, icon=app_icon())
+        if new_name:
+            self._reload_showing(new_name)
 
     def _step_ref(self, delta: int) -> None:
         if not self._paths:

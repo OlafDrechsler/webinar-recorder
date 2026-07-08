@@ -21,7 +21,6 @@ Run:  python player/play.py [session_folder]
 
 from __future__ import annotations
 
-import re
 import shutil
 import sys
 import time
@@ -38,19 +37,15 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
-    QDialog,
-    QDialogButtonBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QLayout,
     QMenu,
-    QMessageBox,
     QProgressDialog,
     QPushButton,
     QSizePolicy,
     QSlider,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -64,6 +59,7 @@ from core.slide_timeline import slide_for_second
 from io_adapters.encode import trim_audio
 from gui.branding import APP_NAME, app_icon
 from gui.dialogs import ask_yes_no
+from gui.slide_ops import adjust_slide_time, delete_slide, move_slide
 from gui.icons import pause_icon, play_icon, skip_back_icon, skip_forward_icon
 from gui.work_area import WorkAreaWindow
 
@@ -120,15 +116,6 @@ class _DiscardWorker(QObject):
             except OSError:
                 pass
         self.finished.emit()
-
-
-def _rename_second(name: str, new_second: int) -> str:
-    """Replace the leading second-prefix of a slide filename, keeping any suffix
-    (``00050.png`` -> ``00080.png``; ``00050_edit_01.png`` -> ``00080_edit_01.png``)."""
-    m = re.match(r"^(\d+)(.*)$", name)
-    if not m:
-        return name
-    return f"{new_second:05d}{m.group(2)}"
 
 
 def merge_strip_items(frames, mics: list[tuple[int, int]]) -> list[dict]:
@@ -502,44 +489,6 @@ class MicSegment:
         self.player.setSource(QUrl())
 
 
-class _TimeAdjustDialog(QDialog):
-    """Pick a new second for a slide, limited to [lo, hi] so the order can't change.
-    The spin box defaults to the current second and shows the matching mm:ss live."""
-
-    def __init__(self, parent, name: str, current: int, lo: int, hi: int) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(tr("player.adjust_time"))
-        self.setWindowIcon(app_icon())
-        lay = QVBoxLayout(self)
-        lay.addWidget(QLabel(tr("time.current", name=name)))
-
-        row = QHBoxLayout()
-        row.addWidget(QLabel(tr("time.new_time")))
-        self._spin = QSpinBox()
-        self._spin.setRange(lo, hi)
-        self._spin.setValue(current)
-        self._spin.setSuffix(" s")
-        row.addWidget(self._spin)
-        self._mmss = QLabel(_fmt(current * 1000))
-        self._mmss.setStyleSheet("color:#888;")
-        row.addWidget(self._mmss)
-        row.addStretch(1)
-        lay.addLayout(row)
-
-        rng = QLabel(tr("time.range", lo=f"{lo} s ({_fmt(lo * 1000)})", hi=f"{hi} s ({_fmt(hi * 1000)})"))
-        rng.setStyleSheet("color:#888;")
-        lay.addWidget(rng)
-
-        self._spin.valueChanged.connect(lambda v: self._mmss.setText(_fmt(v * 1000)))
-        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        lay.addWidget(buttons)
-
-    def value(self) -> int:
-        return self._spin.value()
-
-
 class Player(QWidget):
     def __init__(self, session: Path | None = None) -> None:
         super().__init__()
@@ -814,30 +763,42 @@ class Player(QWidget):
                 return f
         return None
 
-    # ----- big-image context menu -----
+    # ----- slide context menu (shared by big image and film strip) -----
     def _show_slide_menu(self) -> None:
-        if self._slides_dir is None or self._current_slide is None:
+        """Right-click on the big image: acts on the slide currently shown, and
+        additionally offers 'Aufnahme verwerfen'."""
+        self._show_slide_context_menu(self._current_slide, allow_discard=True)
+
+    def _show_slide_context_menu(self, name: str | None, allow_discard: bool) -> None:
+        if self._slides_dir is None or name is None:
             return
         menu = QMenu(self)
+        act_edit = menu.addAction(tr("common.edit"))
         act_time = menu.addAction(tr("player.adjust_time"))
         menu.addSeparator()
         act_move = menu.addAction(tr("sort.menu_move"))
         act_del = menu.addAction(tr("sort.menu_delete"))
-        menu.addSeparator()
+        act_discard = None
         # The time is shown in the label so it's clear the cut is at the PLAYHEAD,
-        # not at the current slide's timestamp. Snapshot it here so the action cuts
-        # at exactly the advertised time even if playback keeps running.
+        # not at this slide's timestamp. Snapshot it so the action cuts at exactly
+        # the advertised time even if playback keeps running.
         t_ms = self._system.position()
-        act_discard = menu.addAction(tr("player.discard_here", time=_fmt(t_ms)))
-        act_discard.setEnabled(t_ms > 0)
+        if allow_discard:
+            menu.addSeparator()
+            act_discard = menu.addAction(tr("player.discard_here", time=_fmt(t_ms)))
+            act_discard.setEnabled(t_ms > 0)
         chosen = menu.exec(QCursor.pos())
-        if chosen == act_time:
-            self._adjust_time()
+        if chosen is None:
+            return
+        if chosen == act_edit:
+            self._edit_slide(name)
+        elif chosen == act_time:
+            self._adjust_slide_time(name)
         elif chosen == act_move:
-            self._remove_current(move=True)
+            self._remove_slide(name, move=True)
         elif chosen == act_del:
-            self._remove_current(move=False)
-        elif chosen == act_discard:
+            self._remove_slide(name, move=False)
+        elif act_discard is not None and chosen == act_discard:
             self._discard_from_here(t_ms)
 
     def _discard_from_here(self, t_ms: int) -> None:
@@ -905,68 +866,36 @@ class Player(QWidget):
         thread.wait()
         dlg.close()
 
-    def _remove_current(self, move: bool) -> None:
-        """Move (to _aussortiert) or delete the slide currently shown big."""
-        name = self._current_slide
-        if self._slides_dir is None or name is None:
+    def _remove_slide(self, name: str, move: bool) -> None:
+        """Move (to _aussortiert) or delete the named slide, then refresh."""
+        if self._slides_dir is None:
             return
-        src = self._slides_dir / name
         if move:
-            dest_dir = self._slides_dir / "_aussortiert"
-            dest_dir.mkdir(exist_ok=True)
-            try:
-                shutil.move(str(src), str(dest_dir / name))
-            except OSError:
+            if not move_slide(self._slides_dir, name):
                 return
         else:
-            if not ask_yes_no(self, tr("player.delete_title"), tr("player.delete_body", name=name)):
+            if not delete_slide(self, self._slides_dir, name):
                 return
-            try:
-                src.unlink()
-            except OSError:
-                pass
         self._after_current_removed(name)
 
-    def _adjust_time(self) -> None:
-        """Rename the current slide to a new second, constrained to the gap between
-        the neighbouring distinct seconds so the slide order can never change."""
-        name = self._current_slide
-        frame = self._frame_by_name(name) if name else None
-        if self._slides_dir is None or frame is None:
+    def _adjust_slide_time(self, name: str) -> None:
+        """Rename the named slide to a new second within the safe neighbour gap."""
+        if self._slides_dir is None:
             return
-        cur = frame.second
-        seconds = sorted({f.second for f in self._frames})
-        prev = max((s for s in seconds if s < cur), default=None)
-        nxt = min((s for s in seconds if s > cur), default=None)
-        lo = prev + 1 if prev is not None else 0
-        if nxt is not None:
-            hi = nxt - 1
-        else:
-            dur = self._system.duration() // 1000
-            hi = max(cur, dur if dur > 0 else cur + 600)
-        # The range always contains the current second, so it is never empty
-        # (lo > hi can't happen) — "no room" is when it contains ONLY that value.
-        if lo == hi:
-            QMessageBox.information(self, tr("player.adjust_time"), tr("time.no_room"))
+        occupied = {f.second for f in self._frames}
+        dur = self._system.duration() // 1000
+        new_name = adjust_slide_time(
+            self, self._slides_dir, name, occupied,
+            duration_s=dur if dur > 0 else None, icon=app_icon(),
+        )
+        if not new_name:
             return
-        dlg = _TimeAdjustDialog(self, name, cur, lo, hi)
-        if dlg.exec() != QDialog.Accepted:
-            return
-        new_second = dlg.value()
-        if new_second == cur:
-            return
-        new_name = _rename_second(name, new_second)
-        target = self._slides_dir / new_name
-        if target.exists():
-            QMessageBox.warning(self, tr("player.adjust_time"), tr("time.collision"))
-            return
-        try:
-            (self._slides_dir / name).rename(target)
-        except OSError:
-            return
-        self._current_slide = new_name
+        was_current = name == self._current_slide
+        if was_current:
+            self._current_slide = new_name
         self._refresh_frames()
-        self.show_slide(new_name)
+        if was_current:
+            self.show_slide(new_name)
 
     # ----- film-strip context menu -----
     def _show_frame_menu(self, item: dict) -> None:
@@ -980,15 +909,8 @@ class Player(QWidget):
             elif chosen == act_del:
                 self._remove_segment(item["start_ms"], move=False)
             return
-        name = item["name"]
-        menu = QMenu(self)
-        act_edit = menu.addAction(tr("common.edit"))
-        act_del = menu.addAction(tr("common.delete"))
-        chosen = menu.exec(QCursor.pos())
-        if chosen == act_edit:
-            self._edit_frame(name)
-        elif chosen == act_del:
-            self._delete_frame(name)
+        # A slide in the strip: same menu as the big image, minus 'Aufnahme verwerfen'.
+        self._show_slide_context_menu(item["name"], allow_discard=False)
 
     def _remove_segment(self, start_ms: int, move: bool) -> None:
         """Move (to mikro/_aussortiert) or delete a mic segment file, then refresh
@@ -1022,7 +944,7 @@ class Player(QWidget):
         if self._current_slide:
             self._filmstrip.set_current_slide(self._current_slide)
 
-    def _edit_frame(self, name: str) -> None:
+    def _edit_slide(self, name: str) -> None:
         """Edit the named image in place (overwrites the same file)."""
         frame = self._frame_by_name(name)
         if self._slides_dir is None or frame is None:
@@ -1037,17 +959,6 @@ class Player(QWidget):
         self._editor.setWindowIcon(app_icon())
         self._editor.saved.connect(self._on_note_saved)
         self._editor.show()
-
-    def _delete_frame(self, name: str) -> None:
-        if self._slides_dir is None:
-            return
-        if not ask_yes_no(self, tr("player.delete_title"), tr("player.delete_body", name=name)):
-            return
-        try:
-            (self._slides_dir / name).unlink()
-        except OSError:
-            pass
-        self._after_current_removed(name)
 
     def _after_current_removed(self, name: str) -> None:
         """Refresh the strip after a slide file was removed/moved; if it was the
