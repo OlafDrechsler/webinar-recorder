@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 import app as recorder
 from core.i18n import LANGUAGES, current_language, set_current_language, tr
 from gui.branding import APP_NAME, app_icon
+from gui.crop_out import open_cropper
 from gui.dialogs import ask_yes_no
 from gui.sort_out import open_sorter
 from player.play import open_player
@@ -84,6 +85,7 @@ class HubWindow(QWidget):
         self._btn_record = self._big_button(lambda: self._launch("record"))
         self._btn_player = self._big_button(lambda: self._launch("player"))
         self._btn_sort = self._big_button(lambda: self._launch("sort"))
+        self._btn_crop = self._big_button(lambda: self._launch("crop"))
         self._btn_settings = QPushButton()
         self._btn_settings.clicked.connect(self._open_settings)
 
@@ -94,11 +96,12 @@ class HubWindow(QWidget):
         layout.addWidget(self._btn_record)
         layout.addWidget(self._btn_player)
         layout.addWidget(self._btn_sort)
+        layout.addWidget(self._btn_crop)
         layout.addStretch(1)
         layout.addWidget(self._btn_settings)
 
         self.retranslate()
-        self.resize(360, 340)
+        self.resize(360, 400)
 
     def _big_button(self, slot) -> QPushButton:
         b = QPushButton()
@@ -113,6 +116,7 @@ class HubWindow(QWidget):
         self._btn_record.setText(tr("hub.record"))
         self._btn_player.setText(tr("hub.player"))
         self._btn_sort.setText(tr("hub.sort"))
+        self._btn_crop.setText(tr("hub.crop"))
         self._btn_settings.setText(tr("hub.settings"))
 
     def _open_settings(self) -> None:
@@ -129,6 +133,8 @@ class HubWindow(QWidget):
             win = recorder.launch_recording()
         elif key == "player":
             win = open_player()
+        elif key == "crop":
+            win = open_cropper()
         else:
             win = open_sorter()
         if win is None:           # dialog cancelled

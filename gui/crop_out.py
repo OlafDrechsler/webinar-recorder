@@ -1,0 +1,344 @@
+"""Crop tool ("Folien zuschneiden") — its own hub window.
+
+Layout like the sort-out tool: folder picker, big reference image, film strip,
+and a bottom row. You drag the rectangle to KEEP directly on the big image (the
+part being trimmed is dimmed as a preview); the crop is the same for every slide,
+so it stays put while you browse to check it. Start applies it to all slides
+losslessly (see core.crop). A toggle in the Start row chooses whether the
+untouched originals are kept in ``_original`` or overwritten.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from PySide6.QtCore import QRect, Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QProgressDialog,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+
+from core.crop import Box, crop_folder
+from core.i18n import tr
+from core.settings import get_data_dir
+from gui.branding import APP_NAME, app_icon
+from gui.dialogs import ask_yes_no
+from gui.sort_out import SortFilmstrip, auto_frames, frame_to_qpixmap, load_frame
+
+
+class CropCanvas(QWidget):
+    """Shows a slide scaled to fit and lets the user drag one keep-rectangle. The
+    area outside it is dimmed as a live preview. The rectangle persists across
+    image changes (same crop for every slide)."""
+
+    box_changed = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._pix: QPixmap | None = None
+        self._box: list[float] | None = None  # [l, t, r, b] in image pixels
+        self._drag_from: tuple[float, float] | None = None
+        self.setMinimumSize(480, 320)
+        self.setCursor(Qt.CrossCursor)
+
+    def set_image(self, pix: QPixmap) -> None:
+        """Swap the shown image but keep the drawn rectangle (browse across slides)."""
+        self._pix = pix
+        self.update()
+
+    def reset(self) -> None:
+        self._box = None
+        self.update()
+        self.box_changed.emit()
+
+    def keep_box(self) -> Box | None:
+        """The kept rectangle in image pixels, or None when it is the full image
+        (nothing to crop) or nothing was drawn yet."""
+        if self._pix is None or self._box is None:
+            return None
+        l, t, r, b = (int(round(v)) for v in self._box)
+        if l <= 0 and t <= 0 and r >= self._pix.width() and b >= self._pix.height():
+            return None
+        return (l, t, r, b)
+
+    # ----- geometry: widget <-> image pixels -----
+    def _disp(self):
+        pw, ph = self._pix.width(), self._pix.height()
+        scale = min(self.width() / pw, self.height() / ph)
+        ox = (self.width() - pw * scale) / 2
+        oy = (self.height() - ph * scale) / 2
+        return ox, oy, scale
+
+    def _to_image(self, x: float, y: float) -> tuple[float, float]:
+        ox, oy, scale = self._disp()
+        ix = max(0, min(self._pix.width(), (x - ox) / scale))
+        iy = max(0, min(self._pix.height(), (y - oy) / scale))
+        return ix, iy
+
+    def _img_to_widget(self, l, t, r, b) -> QRect:
+        ox, oy, scale = self._disp()
+        return QRect(int(ox + l * scale), int(oy + t * scale),
+                     int((r - l) * scale), int((b - t) * scale))
+
+    # ----- mouse -----
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if self._pix is None:
+            return
+        self._drag_from = self._to_image(event.position().x(), event.position().y())
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._pix is None or self._drag_from is None:
+            return
+        x1, y1 = self._drag_from
+        x2, y2 = self._to_image(event.position().x(), event.position().y())
+        self._box = [min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)]
+        self.update()
+        self.box_changed.emit()
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        self._drag_from = None
+        # A click without a real drag means "no crop".
+        if self._box is not None and (self._box[2] - self._box[0] < 2 or self._box[3] - self._box[1] < 2):
+            self._box = None
+            self.update()
+            self.box_changed.emit()
+
+    # ----- paint -----
+    def paintEvent(self, event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(20, 20, 20))
+        if self._pix is None:
+            return
+        ox, oy, scale = self._disp()
+        target = QRect(int(ox), int(oy), int(self._pix.width() * scale), int(self._pix.height() * scale))
+        p.drawPixmap(target, self._pix)
+        if self._box is None:
+            return
+        keep = self._img_to_widget(*self._box)
+        shade = QColor(0, 0, 0, 140)  # dim the part being cropped away
+        p.fillRect(QRect(target.left(), target.top(), target.width(), keep.top() - target.top()), shade)
+        p.fillRect(QRect(target.left(), keep.bottom(), target.width(), target.bottom() - keep.bottom()), shade)
+        p.fillRect(QRect(target.left(), keep.top(), keep.left() - target.left(), keep.height()), shade)
+        p.fillRect(QRect(keep.right(), keep.top(), target.right() - keep.right(), keep.height()), shade)
+        p.setPen(QPen(QColor(45, 166, 255), 2))
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(keep)
+
+
+class CropWindow(QWidget):
+    def __init__(self, folder: Path | None = None) -> None:
+        super().__init__()
+        self.setWindowIcon(app_icon())
+        self.setWindowTitle(APP_NAME)
+        self._folder: Path | None = None
+        self._paths: list[Path] = []
+        self._ref_index = 0
+        self._backup = True
+
+        # Folder picker.
+        self._path_lbl = QLabel(tr("player.no_folder_loaded"))
+        self._path_lbl.setStyleSheet("color:#888;")
+        self._path_lbl.setMinimumWidth(0)
+        self._path_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        folder_btn = QPushButton(tr("player.choose_folder_btn"))
+        folder_btn.clicked.connect(self._choose_folder)
+        folder_row = QHBoxLayout()
+        folder_row.addWidget(QLabel(tr("player.folder_label")))
+        folder_row.addWidget(self._path_lbl, stretch=1)
+        folder_row.addWidget(folder_btn)
+
+        # Big image + prev/next.
+        self._canvas = CropCanvas()
+        self._canvas.box_changed.connect(self._update_hint)
+        self._ref_label = QLabel()
+        prev_btn = QPushButton(tr("sort.prev"))
+        prev_btn.clicked.connect(lambda: self._step_ref(-1))
+        next_btn = QPushButton(tr("sort.next"))
+        next_btn.clicked.connect(lambda: self._step_ref(1))
+        ref_row = QHBoxLayout()
+        ref_row.addWidget(prev_btn)
+        ref_row.addWidget(self._ref_label, stretch=1)
+        ref_row.addWidget(next_btn)
+
+        # Film strip (browse only) with paging arrows.
+        self._filmstrip = SortFilmstrip()
+        self._filmstrip.set_browse_mode(True)
+        self._filmstrip.frame_clicked.connect(self._on_strip_click)
+        strip_left = QPushButton("‹")
+        strip_left.setFixedWidth(28)
+        strip_left.setAutoRepeat(True)
+        strip_left.setAutoRepeatInterval(60)
+        strip_left.clicked.connect(lambda: self._filmstrip.scroll(-3))
+        strip_right = QPushButton("›")
+        strip_right.setFixedWidth(28)
+        strip_right.setAutoRepeat(True)
+        strip_right.setAutoRepeatInterval(60)
+        strip_right.clicked.connect(lambda: self._filmstrip.scroll(3))
+        strip_row = QHBoxLayout()
+        strip_row.setSpacing(4)
+        strip_row.addWidget(strip_left)
+        strip_row.addWidget(self._filmstrip, stretch=1)
+        strip_row.addWidget(strip_right)
+
+        # Bottom row: hint/size (left) — mode toggle — Start (right).
+        self._hint = QLabel()
+        self._hint.setStyleSheet("color:#aaa;")
+        self._mode_btn = QPushButton()
+        self._mode_btn.clicked.connect(self._toggle_mode)
+        self._start_btn = QPushButton(tr("common.start"))
+        self._start_btn.setStyleSheet("font-weight: bold; padding: 6px;")
+        self._start_btn.clicked.connect(self._start)
+        bottom_row = QHBoxLayout()
+        bottom_row.addWidget(self._hint, stretch=1)
+        bottom_row.addWidget(self._mode_btn)
+        bottom_row.addWidget(self._start_btn)
+
+        self._status = QLabel()
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(folder_row)
+        layout.addLayout(ref_row)
+        layout.addWidget(self._canvas, stretch=1)
+        layout.addLayout(strip_row)
+        layout.addLayout(bottom_row)
+        layout.addWidget(self._status)
+        self.resize(960, 820)
+
+        self._refresh_mode_btn()
+        self._update_hint()
+        if folder is not None:
+            self._load_folder(folder)
+
+    # ----- folder -----
+    def _choose_folder(self) -> None:
+        start = str(self._folder.parent if self._folder else get_data_dir())
+        chosen = QFileDialog.getExistingDirectory(self, tr("sort.choose_folder"), start)
+        if chosen:
+            self._load_folder(Path(chosen))
+
+    def _load_folder(self, folder: Path) -> None:
+        folder = Path(folder)
+        if not auto_frames(folder) and (folder / "folien").is_dir() and auto_frames(folder / "folien"):
+            folder = folder / "folien"
+        self._folder = folder
+        self._paths = auto_frames(self._folder)
+        self._ref_index = 0
+        self._path_lbl.setText(self._folder.name)
+        self._path_lbl.setToolTip(str(self._folder))
+        self.setWindowTitle(f"{APP_NAME} – {tr('hub.crop')} – {self._folder.name}")
+        self._canvas.reset()
+        self._refresh_ref()
+        self._filmstrip.set_session(self._paths)
+        self._filmstrip.set_browse_mode(True)
+        self._filmstrip.center_on(self._ref_index)
+        self._status.setText(tr("sort.no_slides") if not self._paths else "")
+
+    # ----- browsing -----
+    def _on_strip_click(self, frame_index: int) -> None:
+        if 0 <= frame_index < len(self._paths):
+            self._ref_index = frame_index
+            self._refresh_ref()
+            self._filmstrip.center_on(self._ref_index)
+
+    def _step_ref(self, delta: int) -> None:
+        if not self._paths:
+            return
+        self._ref_index = (self._ref_index + delta) % len(self._paths)
+        self._refresh_ref()
+        self._filmstrip.center_on(self._ref_index)
+
+    def _refresh_ref(self) -> None:
+        if not self._paths:
+            self._ref_label.setText("—")
+            return
+        path = self._paths[self._ref_index]
+        self._canvas.set_image(frame_to_qpixmap(load_frame(path)))
+        self._ref_label.setText(
+            tr("sort.reference", i=self._ref_index + 1, n=len(self._paths), name=path.name)
+        )
+
+    # ----- bottom row -----
+    def _update_hint(self) -> None:
+        box = self._canvas.keep_box()
+        if box is None:
+            self._hint.setText(tr("crop.hint"))
+            self._start_btn.setEnabled(False)
+        else:
+            l, t, r, b = box
+            self._hint.setText(tr("crop.size", w=r - l, h=b - t))
+            self._start_btn.setEnabled(True)
+
+    def _toggle_mode(self) -> None:
+        self._backup = not self._backup
+        self._refresh_mode_btn()
+
+    def _refresh_mode_btn(self) -> None:
+        if self._backup:
+            self._mode_btn.setText(tr("crop.mode_backup"))
+            self._mode_btn.setStyleSheet("")
+        else:
+            self._mode_btn.setText(tr("crop.mode_overwrite"))
+            self._mode_btn.setStyleSheet("color: white; background: #b00;")
+
+    def _start(self) -> None:
+        box = self._canvas.keep_box()
+        if box is None or not self._paths:
+            return
+        if not self._backup:
+            if not ask_yes_no(self, tr("crop.overwrite_title"), tr("crop.overwrite_body")):
+                return
+        prog = QProgressDialog(tr("crop.working"), None, 0, len(self._paths), self)
+        prog.setWindowTitle(tr("progress.wait_title"))
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setCancelButton(None)
+        prog.setMinimumDuration(0)
+
+        def on_progress(done: int, total: int) -> None:
+            prog.setMaximum(total)
+            prog.setValue(done)
+            QApplication.processEvents()
+
+        n = crop_folder(self._folder, box, backup=self._backup, progress=on_progress)
+        prog.close()
+        # Crop applied — sizes changed, so drop the rectangle and reload.
+        self._canvas.reset()
+        self._paths = auto_frames(self._folder)
+        self._ref_index = min(self._ref_index, max(0, len(self._paths) - 1))
+        self._refresh_ref()
+        self._filmstrip.set_session(self._paths)
+        self._filmstrip.set_browse_mode(True)
+        self._filmstrip.center_on(self._ref_index)
+        self._status.setText(tr("crop.done", n=n))
+
+
+def open_cropper(folder: Path | None = None) -> CropWindow:
+    win = CropWindow(folder)
+    win.setWindowIcon(app_icon())
+    win.show()
+    return win
+
+
+def main() -> int:
+    from core.i18n import init_language
+
+    app = QApplication(sys.argv)
+    app.setWindowIcon(app_icon())
+    init_language()
+    folder = Path(sys.argv[1]) if len(sys.argv) > 1 else None
+    open_cropper(folder)
+    return app.exec()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
