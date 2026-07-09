@@ -33,11 +33,13 @@ from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QMenu,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -47,9 +49,11 @@ from PySide6.QtWidgets import (
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from core.crop import crop_folder
 from core.i18n import tr
 from core.settings import get_data_dir, get_sortout_config, set_sortout_config
 from gui.branding import APP_NAME, app_icon
+from gui.crop_dialog import CropDialog
 from gui.dialogs import ask_yes_no
 from gui.slide_ops import adjust_slide_time, delete_slide, move_slide, slide_second
 from core.slide_dedupe import (
@@ -480,14 +484,17 @@ class SortOutWindow(QWidget):
         run_row.addWidget(self._keep_btn)
         run_row.addWidget(self._discard_btn)
 
-        # Action toggle + Start.
+        # Action toggle + Crop + Start.
         self._action_btn = QPushButton()
         self._action_btn.clicked.connect(self._toggle_action)
+        self._crop_btn = QPushButton(tr("sort.crop_btn"))
+        self._crop_btn.clicked.connect(self._open_crop)
         self._run_btn = QPushButton(tr("common.start"))
         self._run_btn.setStyleSheet("font-weight: bold; padding: 6px;")
         self._run_btn.clicked.connect(self._on_run_clicked)
         action_row = QHBoxLayout()
         action_row.addWidget(self._action_btn)
+        action_row.addWidget(self._crop_btn)
         action_row.addStretch(1)
         action_row.addWidget(self._run_btn)
 
@@ -553,6 +560,39 @@ class SortOutWindow(QWidget):
         if 0 <= frame_index < len(self._paths):
             self._ref_index = frame_index
             self._refresh_ref()
+
+    def _open_crop(self) -> None:
+        """Batch-crop all slides to a keep-rectangle drawn on the reference image."""
+        if self._running or not self._paths:
+            return
+        pix = frame_to_qpixmap(load_frame(self._paths[self._ref_index]))
+        dlg = CropDialog(self, pix, icon=app_icon())
+        if dlg.exec() != QDialog.Accepted:
+            return
+        box = dlg.result_box()
+        if box is None:
+            return
+        prog = QProgressDialog(tr("crop.working"), None, 0, len(self._paths), self)
+        prog.setWindowTitle(tr("progress.wait_title"))
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setCancelButton(None)
+        prog.setMinimumDuration(0)
+
+        def on_progress(done: int, total: int) -> None:
+            prog.setMaximum(total)
+            prog.setValue(done)
+            QApplication.processEvents()
+
+        n = crop_folder(self._folder, box, backup=dlg.use_backup(), progress=on_progress)
+        prog.close()
+        # Sizes changed: reload, drop any dedup mask (it was in the old coordinates).
+        self._canvas.clear_regions()
+        self._paths = auto_frames(self._folder)
+        self._ref_index = min(self._ref_index, max(0, len(self._paths) - 1))
+        self._refresh_ref()
+        self._filmstrip.set_session(self._paths)
+        self._filmstrip.center_on(self._ref_index)
+        self._status.setText(tr("crop.done", n=n))
 
     def _show_image_menu(self) -> None:
         """Right-click on the big image: act on THE SHOWN slide."""
