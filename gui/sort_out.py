@@ -117,6 +117,7 @@ class SortFilmstrip(QWidget):
         self._discard_pending = False
         self._center: int | None = None  # browse offset; None = follow the baseline
         self._browse = False            # browse-only: highlight the centred frame
+        self._range: tuple[int, int] | None = None  # highlighted action range (frame idx)
         self._cache: dict[str, QPixmap] = {}
         self.setFixedHeight(self.THUMB_H + self.CAP_H + 12)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
@@ -126,6 +127,21 @@ class SortFilmstrip(QWidget):
         """Browse-only look: no dedup baseline/candidate frames — just highlight the
         centred (currently shown) slide. Used by the crop tool."""
         self._browse = on
+        self.update()
+
+    def set_range(self, rng: tuple[int, int] | None) -> None:
+        """Highlight the frames of the action range (yellow band), or clear it."""
+        self._range = rng
+        self.update()
+
+    def begin_run(self, lo: int, hi: int) -> None:
+        """Start a dedup run restricted to frames [lo, hi]: the first of the range
+        becomes the baseline, only that range is processed and shown."""
+        self._history = [lo]
+        self._upcoming = list(range(lo + 1, hi + 1))
+        self._discard_pending = False
+        self._center = None
+        self._browse = False
         self.update()
 
     def set_session(self, frames: list[Path]) -> None:
@@ -226,6 +242,11 @@ class SortFilmstrip(QWidget):
         cx = self.width() / 2
         n_side = int((self.width() / 2) // step) + 1
         for pos in range(max(0, center - n_side), min(len(seq), center + n_side + 1)):
+            # Yellow backing band behind the frames that the action will affect.
+            if self._browse and self._range is not None and self._range[0] <= seq[pos] <= self._range[1]:
+                band_x = int(cx + (pos - center) * step - (self.THUMB_W + self.GAP) / 2)
+                p.fillRect(QRect(band_x, 0, self.THUMB_W + self.GAP, self.height()),
+                           QColor(150, 130, 30))
             if self._browse:
                 border = "baseline" if pos == center else "up"  # highlight the shown one
             elif pos == baseline_pos:
@@ -463,12 +484,12 @@ class SortOutWindow(QWidget):
         strip_left.setFixedWidth(28)
         strip_left.setAutoRepeat(True)
         strip_left.setAutoRepeatInterval(60)
-        strip_left.clicked.connect(lambda: self._filmstrip.scroll(-3))
+        strip_left.clicked.connect(lambda: self._filmstrip.scroll(-1))
         strip_right = QPushButton("›")
         strip_right.setFixedWidth(28)
         strip_right.setAutoRepeat(True)
         strip_right.setAutoRepeatInterval(60)
-        strip_right.clicked.connect(lambda: self._filmstrip.scroll(3))
+        strip_right.clicked.connect(lambda: self._filmstrip.scroll(1))
         strip_row = QHBoxLayout()
         strip_row.setSpacing(4)
         strip_row.addWidget(strip_left)
@@ -503,8 +524,8 @@ class SortOutWindow(QWidget):
         self._run_btn.setStyleSheet("font-weight: bold; padding: 6px;")
         self._run_btn.clicked.connect(self._on_run_clicked)
         action_row = QHBoxLayout()
-        action_row.addWidget(self._action_btn)
         action_row.addStretch(1)
+        action_row.addWidget(self._action_btn)  # directly left of Start
         action_row.addWidget(self._run_btn)
 
         self._status = QLabel()
@@ -518,6 +539,8 @@ class SortOutWindow(QWidget):
         self._fraction_val = 0.005
         self._baseline_idx: int | None = None
         self._baseline_frame = None
+        self._range_start: int | None = None  # action range (indices into _paths)
+        self._range_end: int | None = None
         self._step_timer = QTimer(self)
         self._step_timer.setSingleShot(True)
         self._step_timer.timeout.connect(self._do_phase)
@@ -562,6 +585,7 @@ class SortOutWindow(QWidget):
         self._filmstrip.set_session(self._paths)  # first image centred, rest to the right
         self._filmstrip.set_browse_mode(True)     # highlight the shown slide while browsing
         self._filmstrip.center_on(self._ref_index)
+        self._clear_range()
         self._status.setText(tr("sort.no_slides") if not self._paths else "")
 
     # ----- reference image -----
@@ -579,7 +603,7 @@ class SortOutWindow(QWidget):
 
     def _slide_menu_at(self, index: int) -> None:
         """Context menu for a slide (big image or film strip): adjust its time,
-        move it aside or delete it — only that slide, never starting the auto run."""
+        move/delete it, or bound the action range — never starts the auto run."""
         if self._running or not (0 <= index < len(self._paths)):
             return
         menu = QMenu(self)
@@ -587,6 +611,11 @@ class SortOutWindow(QWidget):
         menu.addSeparator()
         act_move = menu.addAction(tr("sort.menu_move"))
         act_del = menu.addAction(tr("sort.menu_delete"))
+        menu.addSeparator()
+        act_from = menu.addAction(tr("range.from_here"))
+        act_to = menu.addAction(tr("range.to_here"))
+        act_clear = menu.addAction(tr("range.clear"))
+        act_clear.setEnabled(self._range_start is not None or self._range_end is not None)
         chosen = menu.exec(QCursor.pos())
         if chosen == act_time:
             self._adjust_slide_time_at(index)
@@ -594,6 +623,31 @@ class SortOutWindow(QWidget):
             self._remove_slide_at(index, move=True)
         elif chosen == act_del:
             self._remove_slide_at(index, move=False)
+        elif chosen == act_from:
+            self._range_start = index
+            self._apply_range_highlight()
+        elif chosen == act_to:
+            self._range_end = index
+            self._apply_range_highlight()
+        elif chosen == act_clear:
+            self._clear_range()
+
+    def _effective_range(self) -> tuple[int, int]:
+        """(lo, hi) the action applies to; full list when no bound is set."""
+        lo = self._range_start if self._range_start is not None else 0
+        hi = self._range_end if self._range_end is not None else len(self._paths) - 1
+        return (min(lo, hi), max(lo, hi))
+
+    def _apply_range_highlight(self) -> None:
+        if self._range_start is None and self._range_end is None:
+            self._filmstrip.set_range(None)
+        else:
+            self._filmstrip.set_range(self._effective_range())
+
+    def _clear_range(self) -> None:
+        self._range_start = None
+        self._range_end = None
+        self._filmstrip.set_range(None)
 
     def _reload_showing(self, name: str) -> None:
         """Reload the auto-frame list and keep ``name`` shown/centred if it still
@@ -658,7 +712,7 @@ class SortOutWindow(QWidget):
             self._action_btn.setText(tr("sort.action_move"))
             self._action_btn.setStyleSheet("")
         else:
-            self._action_btn.setText(tr("sort.action_delete"))
+            self._action_btn.setText(tr("sort.action_delete").upper())  # red -> shout
             self._action_btn.setStyleSheet("color: white; background: #b00;")
 
     def _update_thr_label(self, value: int) -> None:
@@ -757,6 +811,7 @@ class SortOutWindow(QWidget):
         self._set_run_ui(False)
         self._filmstrip.set_session(self._paths)  # back to browse view
         self._filmstrip.set_browse_mode(True)
+        self._clear_range()
         self._ref_index = min(self._ref_index, max(0, len(self._paths) - 1))
         self._refresh_ref()
         self._filmstrip.center_on(self._ref_index)
@@ -769,6 +824,11 @@ class SortOutWindow(QWidget):
         if mask is None or not self._paths:
             QMessageBox.information(self, tr("sort.nothing_title"), tr("sort.nothing_body"))
             return
+        lo, hi = self._effective_range()
+        # Warn if the mask was drawn on a slide that won't even be processed.
+        if not (lo <= self._ref_index <= hi):
+            if not ask_yes_no(self, tr("range.outside_title"), tr("range.outside_body")):
+                return
         if self._action == "delete":
             if not ask_yes_no(self, tr("sort.delete_confirm_title"), tr("sort.delete_confirm_body")):
                 return
@@ -780,11 +840,11 @@ class SortOutWindow(QWidget):
         self._baseline_frame = None
         self._next_phase = "compare"
         self._filmstrip.set_session(self._paths)
-        self._filmstrip.set_browse_mode(False)  # show dedup baseline/candidate frames
+        self._filmstrip.begin_run(lo, hi)  # process only [lo, hi]; baseline = lo
         self._running = True
         self._paused = False
         self._set_run_ui(True)
-        self._show_baseline_big()  # first reference = first slide
+        self._show_baseline_big()  # first reference = first slide of the range
         self._schedule()
 
     def _show_baseline_big(self) -> None:
@@ -877,6 +937,7 @@ class SortOutWindow(QWidget):
         self._set_run_ui(False)
         self._filmstrip.set_browse_mode(True)
         self._filmstrip.center_on(self._ref_index)
+        self._clear_range()
         removals = self._removals
         if not removals:
             self._status.setText(tr("sort.none_found"))

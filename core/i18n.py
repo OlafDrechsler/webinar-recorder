@@ -324,10 +324,10 @@ TRANSLATIONS: dict[str, dict] = {
                            "Action : filtrer (déplacer)", "Acción: filtrar (mover)", "Azione: filtra (sposta)",
                            "Ação: filtrar (mover)", "Actie: eruit filteren (verplaatsen)", "Akcja: odfiltruj (przenieś)",
                            "Eylem: ayıkla (taşı)"),
-    "sort.action_delete": _t("Aktion: ENDGÜLTIG LÖSCHEN", "Action: DELETE PERMANENTLY",
-                             "Action : SUPPRIMER DÉFINITIVEMENT", "Acción: ELIMINAR PERMANENTEMENTE",
-                             "Azione: ELIMINA DEFINITIVAMENTE", "Ação: APAGAR DEFINITIVAMENTE",
-                             "Actie: DEFINITIEF VERWIJDEREN", "Akcja: USUŃ TRWALE", "Eylem: KALICI OLARAK SİL"),
+    "sort.action_delete": _t("Aktion: Endgültig löschen", "Action: Delete permanently",
+                             "Action : Supprimer définitivement", "Acción: Eliminar permanentemente",
+                             "Azione: Elimina definitivamente", "Ação: Apagar definitivamente",
+                             "Actie: Definitief verwijderen", "Akcja: Usuń trwale", "Eylem: Kalıcı olarak sil"),
     "sort.speed_slow": _t("langsam", "slow", "lent", "lento", "lento", "lento", "langzaam", "wolno", "yavaş"),
     "sort.speed_fast": _t("schnell", "fast", "rapide", "rápido", "veloce", "rápido", "snel", "szybko", "hızlı"),
     "sort.pause": _t("Pause", "Pause", "Pause", "Pausa", "Pausa", "Pausa", "Pauze", "Pauza", "Duraklat"),
@@ -370,6 +370,41 @@ TRANSLATIONS: dict[str, dict] = {
     ),
     "sort.cancel_run": _t("ABBRECHEN", "CANCEL", "ANNULER", "CANCELAR", "ANNULLA", "CANCELAR",
                           "ANNULEREN", "ANULUJ", "İPTAL"),
+    "range.from_here": _t("Aktion ab hier", "Action from here", "Action à partir d'ici",
+                          "Acción desde aquí", "Azione da qui", "Ação a partir daqui",
+                          "Actie vanaf hier", "Akcja od tego miejsca", "Buradan itibaren uygula"),
+    "range.to_here": _t("Aktion bis hier", "Action up to here", "Action jusqu'ici",
+                        "Acción hasta aquí", "Azione fino a qui", "Ação até aqui",
+                        "Actie tot hier", "Akcja do tego miejsca", "Buraya kadar uygula"),
+    "range.clear": _t("Bereich aufheben (ganzer Ordner)", "Clear range (whole folder)",
+                      "Annuler la plage (tout le dossier)", "Borrar rango (toda la carpeta)",
+                      "Azzera intervallo (intera cartella)", "Limpar intervalo (pasta inteira)",
+                      "Bereik wissen (hele map)", "Wyczyść zakres (cały folder)",
+                      "Aralığı temizle (tüm klasör)"),
+    "range.outside_title": _t("Bild außerhalb des Bereichs", "Image outside the range",
+                              "Image hors de la plage", "Imagen fuera del rango",
+                              "Immagine fuori intervallo", "Imagem fora do intervalo",
+                              "Afbeelding buiten het bereik", "Obraz poza zakresem",
+                              "Görüntü aralık dışında"),
+    "range.outside_body": _t(
+        "Das große Bild zeigt eine Folie außerhalb des gewählten Bereichs – der markierte Bereich könnte "
+        "falsch positioniert sein. Trotzdem fortfahren?",
+        "The big image shows a slide outside the selected range — the marked area may be positioned "
+        "wrongly. Continue anyway?",
+        "La grande image montre une diapositive hors de la plage sélectionnée — la zone marquée est "
+        "peut-être mal positionnée. Continuer quand même ?",
+        "La imagen grande muestra una diapositiva fuera del rango seleccionado: el área marcada podría "
+        "estar mal colocada. ¿Continuar de todos modos?",
+        "L'immagine grande mostra una diapositiva fuori dall'intervallo selezionato — l'area segnata "
+        "potrebbe essere posizionata male. Continuare comunque?",
+        "A imagem grande mostra um slide fora do intervalo selecionado — a área marcada pode estar mal "
+        "posicionada. Continuar mesmo assim?",
+        "De grote afbeelding toont een dia buiten het gekozen bereik — het gemarkeerde gebied staat "
+        "mogelijk verkeerd. Toch doorgaan?",
+        "Duży obraz pokazuje slajd spoza wybranego zakresu — zaznaczony obszar może być źle umieszczony. "
+        "Kontynuować mimo to?",
+        "Büyük görüntü seçili aralık dışında bir slayt gösteriyor — işaretli alan yanlış konumlanmış "
+        "olabilir. Yine de devam edilsin mi?"),
     "hub.crop": _t("Folien zuschneiden", "Crop slides", "Rogner les diapositives", "Recortar diapositivas",
                    "Ritaglia diapositive", "Recortar slides", "Dia's bijsnijden", "Przytnij slajdy",
                    "Slaytları kırp"),

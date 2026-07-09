@@ -31,17 +31,22 @@ def clamp_box(box: Box, width: int, height: int) -> Box | None:
     return (left, top, right, bottom)
 
 
-def crop_folder(folder: Path, box: Box, backup: bool = True, progress=None) -> int:
-    """Crop every top-level PNG in ``folder`` to ``box`` (reference pixels).
+def crop_folder(folder: Path, box: Box, backup: bool = True, progress=None,
+                names: set[str] | None = None) -> int:
+    """Crop top-level PNGs in ``folder`` to ``box`` (reference pixels).
 
-    ``box`` is clamped per image, so slides of an odd size are handled safely and
-    an image already smaller than the box is left as-is. With ``backup`` the
-    untouched original is copied to ``folder/_original`` first (existing backups
-    are never overwritten, so re-cropping keeps the true original). Lossless.
-    ``progress(done, total)`` is called as it goes. Returns the number cropped.
+    ``names``, if given, restricts cropping to those filenames (e.g. a selected
+    range); otherwise every PNG is cropped. ``box`` is clamped per image, so
+    slides of an odd size are handled safely and an image already smaller than the
+    box is left as-is. With ``backup`` the untouched original is copied to
+    ``folder/_original`` first (existing backups are never overwritten, so
+    re-cropping keeps the true original). Lossless. ``progress(done, total)`` is
+    called as it goes. Returns the number cropped.
     """
     folder = Path(folder)
     paths = sorted(folder.glob("*.png"))
+    if names is not None:
+        paths = [p for p in paths if p.name in names]
     backup_dir = folder / "_original"
     total = len(paths)
     cropped_count = 0

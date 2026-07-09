@@ -16,12 +16,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PySide6.QtCore import QRect, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QCursor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QProgressDialog,
     QPushButton,
     QSizePolicy,
@@ -43,6 +44,7 @@ class CropCanvas(QWidget):
     image changes (same crop for every slide)."""
 
     box_changed = Signal()
+    context_requested = Signal()  # right-click -> range menu
 
     def __init__(self) -> None:
         super().__init__()
@@ -50,7 +52,6 @@ class CropCanvas(QWidget):
         self._box: list[float] | None = None  # [l, t, r, b] in image pixels
         self._drag_from: tuple[float, float] | None = None
         self.setMinimumSize(480, 320)
-        self.setCursor(Qt.CrossCursor)
 
     def set_image(self, pix: QPixmap) -> None:
         """Swap the shown image but keep the drawn rectangle (browse across slides)."""
@@ -93,6 +94,9 @@ class CropCanvas(QWidget):
 
     # ----- mouse -----
     def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.RightButton:
+            self.context_requested.emit()
+            return
         if self._pix is None:
             return
         self._drag_from = self._to_image(event.position().x(), event.position().y())
@@ -145,6 +149,8 @@ class CropWindow(QWidget):
         self._paths: list[Path] = []
         self._ref_index = 0
         self._backup = True
+        self._range_start: int | None = None  # action range (indices into _paths)
+        self._range_end: int | None = None
 
         # Folder picker.
         self._path_lbl = QLabel(tr("player.no_folder_loaded"))
@@ -161,6 +167,7 @@ class CropWindow(QWidget):
         # Big image + prev/next.
         self._canvas = CropCanvas()
         self._canvas.box_changed.connect(self._update_hint)
+        self._canvas.context_requested.connect(lambda: self._range_menu_at(self._ref_index))
         self._ref_label = QLabel()
         prev_btn = QPushButton(tr("sort.prev"))
         prev_btn.clicked.connect(lambda: self._step_ref(-1))
@@ -175,16 +182,17 @@ class CropWindow(QWidget):
         self._filmstrip = SortFilmstrip()
         self._filmstrip.set_browse_mode(True)
         self._filmstrip.frame_clicked.connect(self._on_strip_click)
+        self._filmstrip.frame_context.connect(self._range_menu_at)
         strip_left = QPushButton("‹")
         strip_left.setFixedWidth(28)
         strip_left.setAutoRepeat(True)
         strip_left.setAutoRepeatInterval(60)
-        strip_left.clicked.connect(lambda: self._filmstrip.scroll(-3))
+        strip_left.clicked.connect(lambda: self._filmstrip.scroll(-1))
         strip_right = QPushButton("›")
         strip_right.setFixedWidth(28)
         strip_right.setAutoRepeat(True)
         strip_right.setAutoRepeatInterval(60)
-        strip_right.clicked.connect(lambda: self._filmstrip.scroll(3))
+        strip_right.clicked.connect(lambda: self._filmstrip.scroll(1))
         strip_row = QHBoxLayout()
         strip_row.setSpacing(4)
         strip_row.addWidget(strip_left)
@@ -241,7 +249,43 @@ class CropWindow(QWidget):
         self._filmstrip.set_session(self._paths)
         self._filmstrip.set_browse_mode(True)
         self._filmstrip.center_on(self._ref_index)
+        self._clear_range()
         self._status.setText(tr("sort.no_slides") if not self._paths else "")
+
+    # ----- action range -----
+    def _range_menu_at(self, index: int) -> None:
+        if not (0 <= index < len(self._paths)):
+            return
+        menu = QMenu(self)
+        act_from = menu.addAction(tr("range.from_here"))
+        act_to = menu.addAction(tr("range.to_here"))
+        act_clear = menu.addAction(tr("range.clear"))
+        act_clear.setEnabled(self._range_start is not None or self._range_end is not None)
+        chosen = menu.exec(QCursor.pos())
+        if chosen == act_from:
+            self._range_start = index
+            self._apply_range_highlight()
+        elif chosen == act_to:
+            self._range_end = index
+            self._apply_range_highlight()
+        elif chosen == act_clear:
+            self._clear_range()
+
+    def _effective_range(self) -> tuple[int, int]:
+        lo = self._range_start if self._range_start is not None else 0
+        hi = self._range_end if self._range_end is not None else len(self._paths) - 1
+        return (min(lo, hi), max(lo, hi))
+
+    def _apply_range_highlight(self) -> None:
+        if self._range_start is None and self._range_end is None:
+            self._filmstrip.set_range(None)
+        else:
+            self._filmstrip.set_range(self._effective_range())
+
+    def _clear_range(self) -> None:
+        self._range_start = None
+        self._range_end = None
+        self._filmstrip.set_range(None)
 
     # ----- browsing -----
     def _on_strip_click(self, frame_index: int) -> None:
@@ -287,17 +331,26 @@ class CropWindow(QWidget):
             self._mode_btn.setText(tr("crop.mode_backup"))
             self._mode_btn.setStyleSheet("")
         else:
-            self._mode_btn.setText(tr("crop.mode_overwrite"))
+            self._mode_btn.setText(tr("crop.mode_overwrite").upper())  # red -> shout
             self._mode_btn.setStyleSheet("color: white; background: #b00;")
 
     def _start(self) -> None:
         box = self._canvas.keep_box()
         if box is None or not self._paths:
             return
+        lo, hi = self._effective_range()
+        # Warn if the crop was drawn on a slide that won't even be cropped.
+        if not (lo <= self._ref_index <= hi):
+            if not ask_yes_no(self, tr("range.outside_title"), tr("range.outside_body")):
+                return
+        # Restrict to the selected range (None = all slides).
+        bounded = self._range_start is not None or self._range_end is not None
+        names = {p.name for p in self._paths[lo:hi + 1]} if bounded else None
         if not self._backup:
             if not ask_yes_no(self, tr("crop.overwrite_title"), tr("crop.overwrite_body")):
                 return
-        prog = QProgressDialog(tr("crop.working"), None, 0, len(self._paths), self)
+        total = len(names) if names is not None else len(self._paths)
+        prog = QProgressDialog(tr("crop.working"), None, 0, total, self)
         prog.setWindowTitle(tr("progress.wait_title"))
         prog.setWindowModality(Qt.WindowModal)
         prog.setCancelButton(None)
@@ -308,7 +361,7 @@ class CropWindow(QWidget):
             prog.setValue(done)
             QApplication.processEvents()
 
-        n = crop_folder(self._folder, box, backup=self._backup, progress=on_progress)
+        n = crop_folder(self._folder, box, backup=self._backup, progress=on_progress, names=names)
         prog.close()
         # Crop applied — sizes changed, so drop the rectangle and reload.
         self._canvas.reset()
@@ -318,6 +371,7 @@ class CropWindow(QWidget):
         self._filmstrip.set_session(self._paths)
         self._filmstrip.set_browse_mode(True)
         self._filmstrip.center_on(self._ref_index)
+        self._clear_range()
         self._status.setText(tr("crop.done", n=n))
 
 
