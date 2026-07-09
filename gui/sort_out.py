@@ -935,14 +935,14 @@ class SortOutWindow(QWidget):
         self._paused = False
         self._step_timer.stop()
         self._set_run_ui(False)
-        self._filmstrip.set_browse_mode(True)
-        self._filmstrip.center_on(self._ref_index)
         self._clear_range()
+        # The last kept slide of the processed range = the final baseline (current
+        # reference). Remember it by name so we can re-centre it after any removals
+        # shift the indices.
+        kept_name = (self._paths[self._ref_index].name
+                     if 0 <= self._ref_index < len(self._paths) else None)
         removals = self._removals
-        if not removals:
-            self._status.setText(tr("sort.none_found"))
-            return
-        if self._action == "move":
+        if removals and self._action == "move":
             dest = self._folder / "_aussortiert"
             dest.mkdir(exist_ok=True)
             for p in removals:
@@ -950,22 +950,27 @@ class SortOutWindow(QWidget):
                     shutil.move(str(p), str(dest / p.name))
                 except OSError:
                     pass
-            done = tr("sort.moved", n=len(removals))
-        else:
+        elif removals:
             for p in removals:
                 try:
                     p.unlink()
                 except OSError:
                     pass
-            done = tr("sort.deleted", n=len(removals))
 
+        # Back to the whole folder in the strip, centred (and shown big) on the
+        # last kept slide of the range.
         self._paths = auto_frames(self._folder)
-        self._ref_index = min(self._ref_index, max(0, len(self._paths) - 1))
+        idx = next((i for i, p in enumerate(self._paths) if p.name == kept_name), None)
+        self._ref_index = idx if idx is not None else min(self._ref_index, max(0, len(self._paths) - 1))
         self._refresh_ref()
         self._filmstrip.set_session(self._paths)
         self._filmstrip.set_browse_mode(True)
         self._filmstrip.center_on(self._ref_index)
-        self._status.setText(tr("sort.remaining", done=done, n=len(self._paths)))
+        if removals:
+            done = tr("sort.moved" if self._action == "move" else "sort.deleted", n=len(removals))
+            self._status.setText(tr("sort.remaining", done=done, n=len(self._paths)))
+        else:
+            self._status.setText(tr("sort.none_found"))
 
 
 def open_sorter(folder: Path | None = None) -> SortOutWindow:

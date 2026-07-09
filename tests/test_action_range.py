@@ -93,6 +93,58 @@ def test_sort_warns_when_reference_outside_range(tmp_path, monkeypatch):
 
 
 # ----- Point 4: crop range -----
+def _solid(color):
+    a = np.zeros((40, 60, 3), np.uint8)
+    a[:] = color
+    return a
+
+
+def test_sort_after_range_run_restores_full_strip_centred_on_last_kept(tmp_path, monkeypatch):
+    monkeypatch.setattr(so, "ask_yes_no", lambda *a, **k: True)
+    monkeypatch.setattr(so.QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    fol = tmp_path / "Webinar" / "folien"
+    fol.mkdir(parents=True)
+    # 0 blue | 1,2,3 identical red | 4 green -> within range [1,3], 1 kept, 2&3 dropped
+    for i, c in {0: (0, 0, 255), 1: (255, 0, 0), 2: (255, 0, 0), 3: (255, 0, 0), 4: (0, 255, 0)}.items():
+        Image.fromarray(_solid(c), "RGB").save(str(fol / f"{i * 10:05d}.png"))
+
+    s = SortOutWindow()
+    s._action = "move"
+    s._load_folder(tmp_path / "Webinar")
+    s._range_start, s._range_end = 1, 3
+    s._apply_range_highlight()
+    s._ref_index = 1
+    s._run()
+    assert s._filmstrip._history == [1] and s._filmstrip._upcoming == [2, 3]  # only range during run
+    guard = 0
+    while s._running and guard < 100:
+        s._do_phase()
+        guard += 1
+
+    assert sorted(p.name for p in fol.glob("*.png")) == ["00000.png", "00010.png", "00040.png"]
+    assert len(s._paths) == 3                       # full folder shown again, not just range
+    assert s._filmstrip._range is None              # highlight cleared
+    assert s._paths[s._ref_index].name == "00010.png"                        # last kept shown big
+    assert s._paths[s._filmstrip._effective_center()].name == "00010.png"    # ...and centred
+
+
+def test_crop_after_range_shows_all_and_clears_range(tmp_path, monkeypatch):
+    monkeypatch.setattr(co, "ask_yes_no", lambda *a, **k: True)
+    c = CropWindow()
+    wdir, _ = _webinar(tmp_path)
+    c._load_folder(wdir)
+    c._range_start, c._range_end = 1, 2
+    c._apply_range_highlight()
+    c._canvas._box = [10, 5, 50, 35]
+    c._canvas.box_changed.emit()
+    c._ref_index = 1
+    c._backup = True
+    c._start()
+    assert len(c._paths) == 5                        # all slides still in the strip
+    assert c._filmstrip._range is None               # band cleared
+    assert len(c._filmstrip._history) + len(c._filmstrip._upcoming) == 5
+
+
 def test_crop_only_crops_selected_range(tmp_path, monkeypatch):
     monkeypatch.setattr(co, "ask_yes_no", lambda *a, **k: True)
     c = CropWindow()
