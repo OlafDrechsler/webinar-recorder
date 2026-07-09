@@ -34,7 +34,7 @@ from core.i18n import tr
 from core.settings import get_data_dir
 from gui.branding import APP_NAME, app_icon
 from gui.dialogs import ask_yes_no
-from gui.sort_out import SortFilmstrip, auto_frames, frame_to_qpixmap, load_frame
+from gui.sort_out import SortFilmstrip, auto_frames, frame_to_qpixmap, load_frame, webinar_name
 
 
 class CropCanvas(QWidget):
@@ -140,7 +140,7 @@ class CropWindow(QWidget):
     def __init__(self, folder: Path | None = None) -> None:
         super().__init__()
         self.setWindowIcon(app_icon())
-        self.setWindowTitle(APP_NAME)
+        self.setWindowTitle(f"{APP_NAME} – {tr('hub.crop')}")
         self._folder: Path | None = None
         self._paths: list[Path] = []
         self._ref_index = 0
@@ -234,9 +234,8 @@ class CropWindow(QWidget):
         self._folder = folder
         self._paths = auto_frames(self._folder)
         self._ref_index = 0
-        self._path_lbl.setText(self._folder.name)
+        self._path_lbl.setText(webinar_name(self._folder))
         self._path_lbl.setToolTip(str(self._folder))
-        self.setWindowTitle(f"{APP_NAME} – {tr('hub.crop')} – {self._folder.name}")
         self._canvas.reset()
         self._refresh_ref()
         self._filmstrip.set_session(self._paths)

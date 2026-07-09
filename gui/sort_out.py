@@ -84,6 +84,13 @@ def auto_frames(folder: Path) -> list[Path]:
     return sorted(files, key=numeric_key)
 
 
+def webinar_name(folder: Path) -> str:
+    """Meaningful folder name for the header: the parent (webinar) name when we
+    resolved into a ``folien`` subfolder, otherwise the folder's own name — so it
+    reads the same as the player instead of just 'folien'."""
+    return folder.parent.name if folder.name == "folien" else folder.name
+
+
 class SortFilmstrip(QWidget):
     """Animated film strip for the dedup run.
 
@@ -548,20 +555,23 @@ class SortOutWindow(QWidget):
         self._folder = folder
         self._paths = auto_frames(self._folder)
         self._ref_index = 0
-        self._path_lbl.setText(self._folder.name)
+        self._path_lbl.setText(webinar_name(self._folder))
         self._path_lbl.setToolTip(str(self._folder))
-        self.setWindowTitle(f"{APP_NAME} – {tr('hub.sort')} – {self._folder.name}")
         self._apply_saved_config()
         self._refresh_ref()
         self._filmstrip.set_session(self._paths)  # first image centred, rest to the right
+        self._filmstrip.set_browse_mode(True)     # highlight the shown slide while browsing
+        self._filmstrip.center_on(self._ref_index)
         self._status.setText(tr("sort.no_slides") if not self._paths else "")
 
     # ----- reference image -----
     def _on_strip_click(self, frame_index: int) -> None:
-        """Show the clicked film-strip image in the big (reference) view."""
+        """Show the clicked film-strip image in the big (reference) view, centred."""
         if 0 <= frame_index < len(self._paths):
             self._ref_index = frame_index
             self._refresh_ref()
+            if not self._running:
+                self._filmstrip.center_on(self._ref_index)
 
     def _show_image_menu(self) -> None:
         """Right-click on the big image: act on THE SHOWN slide."""
@@ -746,6 +756,7 @@ class SortOutWindow(QWidget):
         self._removals = []
         self._set_run_ui(False)
         self._filmstrip.set_session(self._paths)  # back to browse view
+        self._filmstrip.set_browse_mode(True)
         self._ref_index = min(self._ref_index, max(0, len(self._paths) - 1))
         self._refresh_ref()
         self._filmstrip.center_on(self._ref_index)
@@ -769,6 +780,7 @@ class SortOutWindow(QWidget):
         self._baseline_frame = None
         self._next_phase = "compare"
         self._filmstrip.set_session(self._paths)
+        self._filmstrip.set_browse_mode(False)  # show dedup baseline/candidate frames
         self._running = True
         self._paused = False
         self._set_run_ui(True)
@@ -863,6 +875,8 @@ class SortOutWindow(QWidget):
         self._paused = False
         self._step_timer.stop()
         self._set_run_ui(False)
+        self._filmstrip.set_browse_mode(True)
+        self._filmstrip.center_on(self._ref_index)
         removals = self._removals
         if not removals:
             self._status.setText(tr("sort.none_found"))
@@ -888,6 +902,8 @@ class SortOutWindow(QWidget):
         self._ref_index = min(self._ref_index, max(0, len(self._paths) - 1))
         self._refresh_ref()
         self._filmstrip.set_session(self._paths)
+        self._filmstrip.set_browse_mode(True)
+        self._filmstrip.center_on(self._ref_index)
         self._status.setText(tr("sort.remaining", done=done, n=len(self._paths)))
 
 

@@ -364,6 +364,12 @@ class FilmstripBar(QWidget):
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.setFixedHeight(self.THUMB_H + 40)  # room for a two-line caption
 
+    def paintEvent(self, event) -> None:  # noqa: N802
+        # Black backing so the strip looks the same (dark) even before a folder is
+        # loaded — like the sort-out strip.
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(22, 22, 22))
+
     def minimumSizeHint(self) -> QSize:  # noqa: N802
         return QSize(0, self.THUMB_H + 40)
 
@@ -493,7 +499,7 @@ class Player(QWidget):
     def __init__(self, session: Path | None = None) -> None:
         super().__init__()
         self.setWindowIcon(app_icon())
-        self.setWindowTitle(APP_NAME)
+        self.setWindowTitle(f"{APP_NAME} – {tr('hub.player')}")
 
         sys_vol, mic_vol = get_player_volumes()
         self._rate = 1.0
@@ -550,6 +556,21 @@ class Player(QWidget):
         self._filmstrip = FilmstripBar()
         self._filmstrip.frame_clicked.connect(self._on_frame_clicked)
         self._filmstrip.frame_context.connect(self._show_frame_menu)
+        self._strip_left = QPushButton("‹")
+        self._strip_left.setFixedWidth(28)
+        self._strip_left.setAutoRepeat(True)
+        self._strip_left.setAutoRepeatInterval(120)
+        self._strip_left.clicked.connect(lambda: self._step_slide(-1))
+        self._strip_right = QPushButton("›")
+        self._strip_right.setFixedWidth(28)
+        self._strip_right.setAutoRepeat(True)
+        self._strip_right.setAutoRepeatInterval(120)
+        self._strip_right.clicked.connect(lambda: self._step_slide(1))
+        self._strip_row = QHBoxLayout()
+        self._strip_row.setSpacing(4)
+        self._strip_row.addWidget(self._strip_left)
+        self._strip_row.addWidget(self._filmstrip, stretch=1)
+        self._strip_row.addWidget(self._strip_right)
 
         # --- transport ---
         self._back_btn = QPushButton()
@@ -627,7 +648,7 @@ class Player(QWidget):
         layout.addLayout(header)
         layout.addWidget(self._slide, stretch=1)
         layout.addWidget(self._fname)
-        layout.addWidget(self._filmstrip)
+        layout.addLayout(self._strip_row)
         layout.addLayout(controls)
         layout.addLayout(vol_row)
         layout.addLayout(seg_row)
@@ -679,9 +700,9 @@ class Player(QWidget):
             # - end) once it is known.
             seg.player.durationChanged.connect(self._on_segment_duration)
 
-        self.setWindowTitle(f"{APP_NAME} – {session.name}")
-        # Show just the folder name (full path as tooltip) so a long path doesn't
-        # force a wide minimum window size.
+        # Title stays "WebinarOD – Player"; the folder is shown in the Ordner line
+        # (just the name, full path as tooltip, so a long path doesn't widen the
+        # window).
         self._path_lbl.setText(session.name)
         self._path_lbl.setToolTip(str(session))
         self._rebuild_segment_menu()
@@ -725,6 +746,17 @@ class Player(QWidget):
         name = slide_for_second(self._timeline, second)
         if name and name != self._current_slide:
             self.show_slide(name)
+
+    def _step_slide(self, delta: int) -> None:
+        """Filmstrip arrows: jump to the previous/next slide (shown big + centred,
+        audio follows) — mic markers are skipped."""
+        if not self._frames:
+            return
+        idx = self._index_of.get(self._current_slide, 0)
+        idx = max(0, min(len(self._frames) - 1, idx + delta))
+        frame = self._frames[idx]
+        self.show_slide(frame.name)
+        self._seek(frame.second * 1000)
 
     def _on_frame_clicked(self, item: dict) -> None:
         if item["kind"] == "mic":
