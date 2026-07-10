@@ -1,7 +1,20 @@
 """Tests for gui.slide_ops (shared slide file operations)."""
 
-import gui.slide_ops as slide_ops
-from gui.slide_ops import (
+import os
+
+import pytest
+
+pytest.importorskip("PySide6")
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtGui import QValidator  # noqa: E402
+from PySide6.QtWidgets import QApplication, QDialog  # noqa: E402
+
+import gui.slide_ops as slide_ops  # noqa: E402
+from core.i18n import tr  # noqa: E402
+from gui.slide_ops import (  # noqa: E402
+    _GuardedSpinBox,
+    adjust_slide_time,
     delete_slide,
     fmt_seconds,
     move_slide,
@@ -9,6 +22,22 @@ from gui.slide_ops import (
     safe_time_range,
     slide_second,
 )
+
+_app = QApplication.instance() or QApplication([])
+
+
+def _stub_dialog(monkeypatch, value):
+    class _Dlg:
+        def __init__(self, *a, **k):
+            pass
+
+        def exec(self):
+            return QDialog.Accepted
+
+        def value(self):
+            return value
+
+    monkeypatch.setattr(slide_ops, "TimeAdjustDialog", _Dlg)
 
 
 # ----- slide_second -----
@@ -87,3 +116,60 @@ def test_delete_slide_declined_keeps_file(tmp_path, monkeypatch):
     monkeypatch.setattr(slide_ops, "ask_yes_no", lambda *a, **k: False)
     assert delete_slide(None, tmp_path, "00010.png") is False
     assert (tmp_path / "00010.png").exists()
+
+
+# ----- guarded spin box -----
+def test_guarded_spinbox_bounds_but_allows_typing_beyond():
+    sb = _GuardedSpinBox(10, 20, 100, 15)
+    assert (sb.minimum(), sb.maximum()) == (10, 20)              # arrows bounded
+    assert sb.validate("50", 2)[0] == QValidator.Acceptable      # typing beyond hi ok
+    assert sb.validate("200", 3)[0] == QValidator.Invalid        # beyond hard_max no
+    sb._on_edited("50")
+    assert sb.chosen_value() == 50                               # override kept
+    sb._on_edited("15")
+    assert sb.chosen_value() == 15                               # back inside -> value
+
+
+# ----- adjust_slide_time -----
+def _three(tmp_path):
+    for n in ("00010.png", "00020.png", "00050.png"):
+        (tmp_path / n).write_bytes(b"X" + n.encode())
+    return {10, 20, 50}
+
+
+def test_adjust_in_range_is_silent(tmp_path, monkeypatch):
+    occ = _three(tmp_path)
+    _stub_dialog(monkeypatch, 15)  # inside gap [11, 49] of cur=20
+    seen = []
+    monkeypatch.setattr(slide_ops, "ask_yes_no", lambda *a: seen.append(a[2]) or True)
+    assert adjust_slide_time(None, tmp_path, "00020.png", occ) == "00015.png"
+    assert (tmp_path / "00015.png").exists() and not (tmp_path / "00020.png").exists()
+    assert seen == []  # no confirmation for an in-range move
+
+
+def test_adjust_reorder_free_asks_plain(tmp_path, monkeypatch):
+    occ = _three(tmp_path)
+    _stub_dialog(monkeypatch, 5)  # below the gap -> reorder, second 5 is free
+    seen = []
+    monkeypatch.setattr(slide_ops, "ask_yes_no", lambda *a: seen.append(a[2]) or True)
+    assert adjust_slide_time(None, tmp_path, "00020.png", occ) == "00005.png"
+    assert seen == [tr("time.reorder_body")]
+
+
+def test_adjust_reorder_onto_occupied_warns_and_overwrites(tmp_path, monkeypatch):
+    occ = _three(tmp_path)
+    _stub_dialog(monkeypatch, 10)  # second 10 already taken by 00010.png
+    seen = []
+    monkeypatch.setattr(slide_ops, "ask_yes_no", lambda *a: seen.append(a[2]) or True)
+    assert adjust_slide_time(None, tmp_path, "00020.png", occ) == "00010.png"
+    assert seen == [tr("time.reorder_occupied_body")]
+    assert (tmp_path / "00010.png").read_bytes() == b"X00020.png"  # took its place
+    assert not (tmp_path / "00020.png").exists()
+
+
+def test_adjust_declined_changes_nothing(tmp_path, monkeypatch):
+    occ = _three(tmp_path)
+    _stub_dialog(monkeypatch, 5)
+    monkeypatch.setattr(slide_ops, "ask_yes_no", lambda *a: False)
+    assert adjust_slide_time(None, tmp_path, "00020.png", occ) is None
+    assert (tmp_path / "00020.png").exists() and not (tmp_path / "00005.png").exists()

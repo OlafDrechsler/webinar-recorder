@@ -922,12 +922,9 @@ class Player(QWidget):
         )
         if not new_name:
             return
-        was_current = name == self._current_slide
-        if was_current:
-            self._current_slide = new_name
+        # Show the renamed slide big + centred (it may have moved in the order).
         self._refresh_frames()
-        if was_current:
-            self.show_slide(new_name)
+        self.show_slide(new_name)
 
     # ----- film-strip context menu -----
     def _show_frame_menu(self, item: dict) -> None:

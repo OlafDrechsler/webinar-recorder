@@ -7,17 +7,17 @@ Keeping the fiddly rename/collision handling here means both behave identically.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from pathlib import Path
 
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QValidator
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QSpinBox,
     QVBoxLayout,
 )
@@ -62,11 +62,43 @@ def safe_time_range(occupied: set[int], current: int, duration_s: int | None) ->
     return lo, hi
 
 
-class TimeAdjustDialog(QDialog):
-    """Pick a new second for a slide, limited to ``[lo, hi]``. The spin box defaults
-    to the current second and shows the matching mm:ss live."""
+class _GuardedSpinBox(QSpinBox):
+    """Bounded to ``[lo, hi]`` for the arrows / normal use (sensible guardrails),
+    but the user may TYPE a value beyond it (up to ``hard_max``) to force a reorder.
+    ``chosen_value()`` returns what was actually entered, even outside the range."""
 
-    def __init__(self, parent, name: str, current: int, lo: int, hi: int, icon: QIcon | None = None) -> None:
+    def __init__(self, lo: int, hi: int, hard_max: int, value: int) -> None:
+        super().__init__()
+        self._lo, self._hi, self._hard_max = lo, hi, hard_max
+        self.setRange(lo, hi)
+        self.setValue(value)
+        self._override: int | None = None  # a typed value outside [lo, hi]
+        self.lineEdit().textEdited.connect(self._on_edited)
+
+    def _on_edited(self, text: str) -> None:
+        t = text.strip()
+        self._override = int(t) if (t.isdigit() and not (self._lo <= int(t) <= self._hi)) else None
+
+    def validate(self, text: str, pos: int):  # noqa: N802
+        # Let the user keep typing an out-of-range (but valid) second instead of
+        # clamping the keystrokes away.
+        t = text.strip()
+        if t == "":
+            return (QValidator.Intermediate, text, pos)
+        if t.isdigit() and 0 <= int(t) <= self._hard_max:
+            return (QValidator.Acceptable, text, pos)
+        return (QValidator.Invalid, text, pos)
+
+    def chosen_value(self) -> int:
+        return self._override if self._override is not None else self.value()
+
+
+class TimeAdjustDialog(QDialog):
+    """Pick a new second for a slide. The spin box guards to ``[lo, hi]`` (no
+    reorder); typing a value beyond it is allowed and handled by the caller."""
+
+    def __init__(self, parent, name: str, current: int, lo: int, hi: int,
+                 hard_max: int, icon: QIcon | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(tr("player.adjust_time"))
         if icon is not None:
@@ -76,10 +108,7 @@ class TimeAdjustDialog(QDialog):
 
         row = QHBoxLayout()
         row.addWidget(QLabel(tr("time.new_time")))
-        self._spin = QSpinBox()
-        self._spin.setRange(lo, hi)
-        self._spin.setValue(current)
-        self._spin.setSuffix(" s")
+        self._spin = _GuardedSpinBox(lo, hi, hard_max, current)
         row.addWidget(self._spin)
         self._mmss = QLabel(fmt_seconds(current))
         self._mmss.setStyleSheet("color:#888;")
@@ -91,43 +120,50 @@ class TimeAdjustDialog(QDialog):
         rng.setStyleSheet("color:#888;")
         lay.addWidget(rng)
 
-        self._spin.valueChanged.connect(lambda v: self._mmss.setText(fmt_seconds(v)))
+        self._spin.valueChanged.connect(self._update_mmss)
+        self._spin.lineEdit().textEdited.connect(self._update_mmss)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         lay.addWidget(buttons)
 
+    def _update_mmss(self, *_a) -> None:
+        self._mmss.setText(fmt_seconds(self._spin.chosen_value()))
+
     def value(self) -> int:
-        return self._spin.value()
+        return self._spin.chosen_value()
 
 
 def adjust_slide_time(parent, slides_dir: Path, name: str, occupied: set[int],
                       duration_s: int | None = None, icon: QIcon | None = None) -> str | None:
-    """Show the adjust-time dialog for ``name`` and rename it within the safe gap.
-    ``occupied`` is the set of distinct seconds already present in the folder.
-    Returns the new filename, or None when nothing changed."""
+    """Show the adjust-time dialog for ``name`` and rename it. Within the safe gap
+    the change applies silently; a value outside it reorders the slides and is
+    confirmed first (with a stronger warning when another slide already sits on
+    that second, which is then overwritten). Returns the new filename or None."""
     cur = slide_second(name)
     if cur is None:
         return None
     lo, hi = safe_time_range(occupied, cur, duration_s)
-    # The range always contains the current second, so it is never empty — "no room"
-    # is when it contains only that value (the neighbours are right next to it).
-    if lo == hi:
-        QMessageBox.information(parent, tr("player.adjust_time"), tr("time.no_room"))
-        return None
-    dlg = TimeAdjustDialog(parent, name, cur, lo, hi, icon)
+    hard_max = duration_s if duration_s else 99999
+    dlg = TimeAdjustDialog(parent, name, cur, lo, hi, hard_max, icon)
     if dlg.exec() != QDialog.Accepted:
         return None
-    new_second = dlg.value()
+    new_second = max(0, min(hard_max, dlg.value()))
     if new_second == cur:
         return None
+    if not (lo <= new_second <= hi):  # outside the guardrails -> reorder, confirm
+        occupied_by_other = new_second in occupied  # new_second != cur, so it's another slide
+        body = tr("time.reorder_occupied_body") if occupied_by_other else tr("time.reorder_body")
+        if not ask_yes_no(parent, tr("time.reorder_title"), body):
+            return None
     new_name = rename_second(name, new_second)
     target = slides_dir / new_name
-    if target.exists():
-        QMessageBox.warning(parent, tr("player.adjust_time"), tr("time.collision"))
-        return None
+    src = slides_dir / name
     try:
-        (slides_dir / name).rename(target)
+        if target.exists() and target != src:
+            os.replace(str(src), str(target))  # take the occupied slide's place (confirmed)
+        else:
+            src.rename(target)
     except OSError:
         return None
     return new_name
