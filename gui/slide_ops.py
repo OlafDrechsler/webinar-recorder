@@ -7,7 +7,6 @@ Keeping the fiddly rename/collision handling here means both behave identically.
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 from pathlib import Path
@@ -23,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.i18n import tr
+from core.naming import marked_frame_name
 from gui.dialogs import ask_yes_no
 
 _PREFIX = re.compile(r"^(\d+)(.*)$")
@@ -139,7 +139,8 @@ def adjust_slide_time(parent, slides_dir: Path, name: str, occupied: set[int],
     """Show the adjust-time dialog for ``name`` and rename it. Within the safe gap
     the change applies silently; a value outside it reorders the slides and is
     confirmed first (with a stronger warning when another slide already sits on
-    that second, which is then overwritten). Returns the new filename or None."""
+    that second). If the target filename is taken, the moved slide gets a suffix so
+    both end up side by side. Returns the new filename or None."""
     cur = slide_second(name)
     if cur is None:
         return None
@@ -156,14 +157,16 @@ def adjust_slide_time(parent, slides_dir: Path, name: str, occupied: set[int],
         body = tr("time.reorder_occupied_body") if occupied_by_other else tr("time.reorder_body")
         if not ask_yes_no(parent, tr("time.reorder_title"), body):
             return None
+    src = slides_dir / name
     new_name = rename_second(name, new_second)
     target = slides_dir / new_name
-    src = slides_dir / name
+    if target.exists() and target != src:
+        # Another slide already has that exact filename — keep both side by side by
+        # giving the moved slide a suffix (sorts right after the existing one).
+        new_name = marked_frame_name(new_second, {p.name for p in slides_dir.glob("*.png")})
+        target = slides_dir / new_name
     try:
-        if target.exists() and target != src:
-            os.replace(str(src), str(target))  # take the occupied slide's place (confirmed)
-        else:
-            src.rename(target)
+        src.rename(target)
     except OSError:
         return None
     return new_name
