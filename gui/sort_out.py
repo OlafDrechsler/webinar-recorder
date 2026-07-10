@@ -50,6 +50,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.filmstrip import build_filmstrip
 from core.i18n import tr
+from core.naming import is_annotated
 from core.settings import get_data_dir, get_sortout_config, set_sortout_config
 from gui.branding import APP_NAME, app_icon
 from gui.dialogs import ask_yes_no
@@ -540,6 +541,7 @@ class SortOutWindow(QWidget):
         self._fraction_val = 0.005
         self._baseline_idx: int | None = None
         self._baseline_frame = None
+        self._compare_idx = 0  # index of the last kept NON-annotated frame (compare ref)
         self._range_start: int | None = None  # action range (indices into _paths)
         self._range_end: int | None = None
         self._step_timer = QTimer(self)
@@ -840,6 +842,7 @@ class SortOutWindow(QWidget):
         self._baseline_idx = None
         self._baseline_frame = None
         self._next_phase = "compare"
+        self._compare_idx = lo
         self._filmstrip.set_session(self._paths)
         self._filmstrip.begin_run(lo, hi)  # process only [lo, hi]; baseline = lo
         self._running = True
@@ -866,16 +869,25 @@ class SortOutWindow(QWidget):
             self._finish()
             return
         if self._next_phase == "compare":
-            base = self._baseline_frame_for(self._filmstrip.baseline_index())
-            cand = load_frame(self._paths[self._filmstrip.candidate_index()])
-            if masked_frames_differ(base, cand, self._mask, fraction_threshold=self._fraction_val):
-                self._filmstrip.rebaseline()  # new baseline
-                self._baseline_idx = None
-                self._show_baseline_big()     # the new reference appears big
+            cand_idx = self._filmstrip.candidate_index()
+            if is_annotated(self._paths[cand_idx].name):
+                # Annotated frames are always kept — shown, never removed — and do
+                # NOT become the comparison reference, so a duplicate that follows
+                # one is still caught against the previous real slide.
+                self._filmstrip.rebaseline()
+                self._show_baseline_big()
                 self._next_phase = "compare"
             else:
-                self._filmstrip.mark_discard()  # red frame, eject after the delay
-                self._next_phase = "eject"
+                base = self._baseline_frame_for(self._compare_idx)
+                cand = load_frame(self._paths[cand_idx])
+                if masked_frames_differ(base, cand, self._mask, fraction_threshold=self._fraction_val):
+                    self._filmstrip.rebaseline()  # new baseline + comparison reference
+                    self._compare_idx = cand_idx
+                    self._show_baseline_big()
+                    self._next_phase = "compare"
+                else:
+                    self._filmstrip.mark_discard()  # red frame, eject after the delay
+                    self._next_phase = "eject"
         else:  # eject the duplicate
             idx = self._filmstrip.eject()
             self._removals.append(self._paths[idx])
@@ -900,8 +912,10 @@ class SortOutWindow(QWidget):
     def _override_keep(self) -> None:
         if not (self._running and self._paused and self._filmstrip.has_candidate()):
             return
+        cand_idx = self._filmstrip.candidate_index()
         self._filmstrip.rebaseline()
-        self._baseline_idx = None
+        if not is_annotated(self._paths[cand_idx].name):
+            self._compare_idx = cand_idx  # a kept real slide becomes the new reference
         self._show_baseline_big()
         self._next_phase = "compare"
         if not self._filmstrip.has_candidate():

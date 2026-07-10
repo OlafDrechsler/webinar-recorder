@@ -16,8 +16,17 @@ from typing import Iterable
 PAD = 5
 
 
+_ANNOTATED = re.compile(r"^\d+_(?:markiert|edit)_\d+\.png$", re.IGNORECASE)
+
+
 def auto_frame_name(seconds: int) -> str:
     return f"{seconds:0{PAD}d}.png"
+
+
+def is_annotated(name: str) -> bool:
+    """True for annotated frames (``NNNNN_edit_NN.png`` / ``NNNNN_markiert_NN.png``).
+    These are kept unconditionally during the dedup run."""
+    return bool(_ANNOTATED.match(name))
 
 
 def marked_frame_name(seconds: int, existing: Iterable[str]) -> str:
