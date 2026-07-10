@@ -1,4 +1,4 @@
-from core.naming import auto_frame_name, marked_frame_name
+from core.naming import auto_frame_name, marked_frame_name, moved_frame_name
 
 
 def test_auto_frame_name_zero_padded():
@@ -34,3 +34,18 @@ def test_marked_frame_name_counts_only_same_second():
 def test_marked_frame_name_ignores_unrelated_files():
     existing = ["notes.txt", "00137.png", "thumb_00137_edit_01.png"]
     assert marked_frame_name(137, existing=existing) == "00137_edit_01.png"
+
+
+def test_moved_frame_name_starts_at_01():
+    assert moved_frame_name(137, existing=["00137.png"]) == "00137_01.png"
+
+
+def test_moved_frame_name_increments_past_existing():
+    existing = ["00137.png", "00137_01.png", "00137_02.png"]
+    assert moved_frame_name(137, existing=existing) == "00137_03.png"
+
+
+def test_moved_frame_name_ignores_edit_frames():
+    # "_edit_"/"_markiert_" use a different scheme and must not affect the counter.
+    existing = ["00137.png", "00137_edit_05.png"]
+    assert moved_frame_name(137, existing=existing) == "00137_01.png"

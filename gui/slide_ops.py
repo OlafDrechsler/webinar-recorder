@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.i18n import tr
-from core.naming import marked_frame_name
+from core.naming import moved_frame_name
 from gui.dialogs import ask_yes_no
 
 _PREFIX = re.compile(r"^(\d+)(.*)$")
@@ -162,8 +162,8 @@ def adjust_slide_time(parent, slides_dir: Path, name: str, occupied: set[int],
     target = slides_dir / new_name
     if target.exists() and target != src:
         # Another slide already has that exact filename — keep both side by side by
-        # giving the moved slide a suffix (sorts right after the existing one).
-        new_name = marked_frame_name(new_second, {p.name for p in slides_dir.glob("*.png")})
+        # giving the moved slide a "NNNNN_NN.png" suffix (sorts right after it).
+        new_name = moved_frame_name(new_second, {p.name for p in slides_dir.glob("*.png")})
         target = slides_dir / new_name
     try:
         src.rename(target)

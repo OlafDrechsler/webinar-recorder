@@ -161,11 +161,11 @@ def test_adjust_reorder_onto_occupied_keeps_both_with_suffix(tmp_path, monkeypat
     _stub_dialog(monkeypatch, 10)  # second 10 already taken by 00010.png
     seen = []
     monkeypatch.setattr(slide_ops, "ask_yes_no", lambda *a: seen.append(a[2]) or True)
-    # moved slide gets a suffix so both live side by side at second 10
-    assert adjust_slide_time(None, tmp_path, "00020.png", occ) == "00010_edit_01.png"
+    # moved slide gets a "_NN" suffix so both live side by side at second 10
+    assert adjust_slide_time(None, tmp_path, "00020.png", occ) == "00010_01.png"
     assert seen == [tr("time.reorder_occupied_body")]
-    assert (tmp_path / "00010.png").read_bytes() == b"X00010.png"          # untouched
-    assert (tmp_path / "00010_edit_01.png").read_bytes() == b"X00020.png"  # the moved one
+    assert (tmp_path / "00010.png").read_bytes() == b"X00010.png"      # untouched
+    assert (tmp_path / "00010_01.png").read_bytes() == b"X00020.png"   # the moved one
     assert not (tmp_path / "00020.png").exists()
 
 

@@ -16,6 +16,8 @@ from typing import Iterable, NamedTuple, Optional
 _AUTO = re.compile(r"^(\d+)\.png$", re.IGNORECASE)
 # Annotated frames: new "_edit_" and legacy "_markiert_".
 _MARKED = re.compile(r"^(\d+)_(?:markiert|edit)_\d+\.png$", re.IGNORECASE)
+# Slides moved onto an occupied second: "NNNNN_NN.png" (a plain running counter).
+_MOVED = re.compile(r"^(\d+)_\d+\.png$", re.IGNORECASE)
 
 
 class Frame(NamedTuple):
@@ -31,6 +33,9 @@ def _parse(name: str) -> Optional[Frame]:
     m = _MARKED.match(name)
     if m:
         return Frame(int(m.group(1)), name, True)
+    m = _MOVED.match(name)
+    if m:
+        return Frame(int(m.group(1)), name, False)
     return None
 
 

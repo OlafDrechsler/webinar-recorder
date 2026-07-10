@@ -21,6 +21,16 @@ def test_edit_frames_recognised():
     assert frames == [Frame(50, "00050_edit_01.png", True)]
 
 
+def test_moved_frames_recognised_and_sorted_after_auto():
+    # "NNNNN_NN.png" (a slide moved onto an occupied second) sorts right after the
+    # auto frame of that second and is treated as a normal (non-marked) slide.
+    frames = build_filmstrip(["00010_01.png", "00010.png"])
+    assert frames == [
+        Frame(10, "00010.png", False),
+        Frame(10, "00010_01.png", False),
+    ]
+
+
 def test_ignores_non_slides():
     assert build_filmstrip(["mikro_00005.wav", "_aussortiert", "x.png"]) == []
 
