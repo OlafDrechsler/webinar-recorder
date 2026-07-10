@@ -15,14 +15,15 @@ Workflow (see also core/slide_dedupe.py for the comparison logic):
    a speed slider (slow↔fast) and Pause/Keep/Discard let you watch and intervene.
 4. The chosen action is applied to the detected duplicates at the end of the run.
 
-``*_markiert_*`` files (your annotations) are never touched. The last mask is
+The browse list / film strip shows every slide scheme (auto ``NNNNN.png``, moved
+``NNNNN_NN.png`` and annotated ``NNNNN_edit_/markiert_NN.png``) — the same as the
+player — so all of them can be browsed and deduplicated. The last mask is
 remembered (core.settings) and can also be saved/loaded as a file.
 """
 
 from __future__ import annotations
 
 import json
-import re
 import shutil
 import sys
 from pathlib import Path
@@ -47,6 +48,7 @@ from PySide6.QtWidgets import (
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from core.filmstrip import build_filmstrip
 from core.i18n import tr
 from core.settings import get_data_dir, get_sortout_config, set_sortout_config
 from gui.branding import APP_NAME, app_icon
@@ -60,10 +62,7 @@ from core.slide_dedupe import (
     Region,
     build_compare_mask,
     masked_frames_differ,
-    numeric_key,
 )
-
-_AUTO_FRAME = re.compile(r"^\d+\.png$", re.IGNORECASE)
 
 
 def load_frame(path: Path) -> np.ndarray:
@@ -78,10 +77,12 @@ def frame_to_qpixmap(frame: np.ndarray) -> QPixmap:
     return QPixmap.fromImage(img)
 
 
-def auto_frames(folder: Path) -> list[Path]:
-    """All auto-saved slide files (NNNNN.png), sorted ascending; marked ones out."""
-    files = [p for p in folder.glob("*.png") if _AUTO_FRAME.match(p.name)]
-    return sorted(files, key=numeric_key)
+def slide_frames(folder: Path) -> list[Path]:
+    """All slide frames in the folder — auto (``NNNNN.png``), moved
+    (``NNNNN_NN.png``) and annotated (``NNNNN_edit_/markiert_NN.png``) — ordered by
+    second then filename, i.e. the same recognition and order the player uses."""
+    names = [p.name for p in folder.glob("*.png")]
+    return [folder / f.name for f in build_filmstrip(names)]
 
 
 def webinar_name(folder: Path) -> str:
@@ -573,10 +574,10 @@ class SortOutWindow(QWidget):
         folder = Path(folder)
         # Accept a parent webinar folder (any name): if it has no slide PNGs
         # directly but a "folien" subfolder does, use that.
-        if not auto_frames(folder) and (folder / "folien").is_dir() and auto_frames(folder / "folien"):
+        if not slide_frames(folder) and (folder / "folien").is_dir() and slide_frames(folder / "folien"):
             folder = folder / "folien"
         self._folder = folder
-        self._paths = auto_frames(self._folder)
+        self._paths = slide_frames(self._folder)
         self._ref_index = 0
         self._path_lbl.setText(webinar_name(self._folder))
         self._path_lbl.setToolTip(str(self._folder))
@@ -652,7 +653,7 @@ class SortOutWindow(QWidget):
     def _reload_showing(self, name: str) -> None:
         """Reload the auto-frame list and keep ``name`` shown/centred if it still
         exists, otherwise clamp the reference index into the shortened list."""
-        self._paths = auto_frames(self._folder)
+        self._paths = slide_frames(self._folder)
         idx = next((i for i, p in enumerate(self._paths) if p.name == name), None)
         self._ref_index = idx if idx is not None else min(self._ref_index, max(0, len(self._paths) - 1))
         self._refresh_ref()
@@ -959,7 +960,7 @@ class SortOutWindow(QWidget):
 
         # Back to the whole folder in the strip, centred (and shown big) on the
         # last kept slide of the range.
-        self._paths = auto_frames(self._folder)
+        self._paths = slide_frames(self._folder)
         idx = next((i for i, p in enumerate(self._paths) if p.name == kept_name), None)
         self._ref_index = idx if idx is not None else min(self._ref_index, max(0, len(self._paths) - 1))
         self._refresh_ref()

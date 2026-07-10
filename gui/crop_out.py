@@ -35,7 +35,7 @@ from core.i18n import tr
 from core.settings import get_data_dir
 from gui.branding import APP_NAME, app_icon
 from gui.dialogs import ask_yes_no
-from gui.sort_out import SortFilmstrip, auto_frames, frame_to_qpixmap, load_frame, webinar_name
+from gui.sort_out import SortFilmstrip, frame_to_qpixmap, load_frame, slide_frames, webinar_name
 
 
 class CropCanvas(QWidget):
@@ -237,10 +237,10 @@ class CropWindow(QWidget):
 
     def _load_folder(self, folder: Path) -> None:
         folder = Path(folder)
-        if not auto_frames(folder) and (folder / "folien").is_dir() and auto_frames(folder / "folien"):
+        if not slide_frames(folder) and (folder / "folien").is_dir() and slide_frames(folder / "folien"):
             folder = folder / "folien"
         self._folder = folder
-        self._paths = auto_frames(self._folder)
+        self._paths = slide_frames(self._folder)
         self._ref_index = 0
         self._path_lbl.setText(webinar_name(self._folder))
         self._path_lbl.setToolTip(str(self._folder))
@@ -365,7 +365,7 @@ class CropWindow(QWidget):
         prog.close()
         # Crop applied — sizes changed, so drop the rectangle and reload.
         self._canvas.reset()
-        self._paths = auto_frames(self._folder)
+        self._paths = slide_frames(self._folder)
         self._ref_index = min(self._ref_index, max(0, len(self._paths) - 1))
         self._refresh_ref()
         self._filmstrip.set_session(self._paths)
