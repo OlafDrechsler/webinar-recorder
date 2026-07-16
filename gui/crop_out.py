@@ -35,6 +35,8 @@ from core.i18n import tr
 from core.settings import get_data_dir, get_last_session, set_last_session
 from gui.branding import APP_NAME, app_icon
 from gui.dialogs import ask_yes_no
+from gui.selection import next_selection
+from gui.slide_ops import delete_slide, move_slide
 from gui.sort_out import (
     SortFilmstrip,
     frame_to_qpixmap,
@@ -158,6 +160,8 @@ class CropWindow(QWidget):
         self._backup = True
         self._range_start: int | None = None  # action range (indices into _paths)
         self._range_end: int | None = None
+        self._selection: set[int] = set()  # multi-selected frame indices
+        self._anchor: int | None = None
 
         # Folder picker.
         self._path_lbl = QLabel(tr("player.no_folder_loaded"))
@@ -174,7 +178,7 @@ class CropWindow(QWidget):
         # Big image + prev/next.
         self._canvas = CropCanvas()
         self._canvas.box_changed.connect(self._update_hint)
-        self._canvas.context_requested.connect(lambda: self._range_menu_at(self._ref_index))
+        self._canvas.context_requested.connect(lambda: self._slide_menu_at(self._ref_index))
         self._ref_label = QLabel()
         prev_btn = QPushButton(tr("sort.prev"))
         prev_btn.clicked.connect(lambda: self._step_ref(-1))
@@ -189,7 +193,7 @@ class CropWindow(QWidget):
         self._filmstrip = SortFilmstrip()
         self._filmstrip.set_browse_mode(True)
         self._filmstrip.frame_clicked.connect(self._on_strip_click)
-        self._filmstrip.frame_context.connect(self._range_menu_at)
+        self._filmstrip.frame_context.connect(self._slide_menu_at)
         strip_left = QPushButton("‹")
         strip_left.setFixedWidth(28)
         strip_left.setAutoRepeat(True)
@@ -258,19 +262,30 @@ class CropWindow(QWidget):
         self._filmstrip.set_browse_mode(True)
         self._filmstrip.center_on(self._ref_index)
         self._clear_range()
+        self._clear_selection()
         self._status.setText(tr("sort.no_slides") if not self._paths else "")
 
-    # ----- action range -----
-    def _range_menu_at(self, index: int) -> None:
+    # ----- context menu (single / bulk / range) -----
+    def _slide_menu_at(self, index: int) -> None:
         if not (0 <= index < len(self._paths)):
             return
+        if len(self._selection) > 1 and index in self._selection:
+            self._bulk_menu()
+            return
         menu = QMenu(self)
+        act_move = menu.addAction(tr("sort.menu_move"))
+        act_del = menu.addAction(tr("sort.menu_delete"))
+        menu.addSeparator()
         act_from = menu.addAction(tr("range.from_here"))
         act_to = menu.addAction(tr("range.to_here"))
         act_clear = menu.addAction(tr("range.clear"))
         act_clear.setEnabled(self._range_start is not None or self._range_end is not None)
         chosen = menu.exec(QCursor.pos())
-        if chosen == act_from:
+        if chosen == act_move:
+            self._remove_slide_at(index, move=True)
+        elif chosen == act_del:
+            self._remove_slide_at(index, move=False)
+        elif chosen == act_from:
             self._range_start = index
             self._apply_range_highlight()
         elif chosen == act_to:
@@ -278,6 +293,75 @@ class CropWindow(QWidget):
             self._apply_range_highlight()
         elif chosen == act_clear:
             self._clear_range()
+
+    def _bulk_menu(self) -> None:
+        n = len(self._selection)
+        menu = QMenu(self)
+        act_move = menu.addAction(tr("multi.move", n=n))
+        act_del = menu.addAction(tr("multi.delete", n=n))
+        chosen = menu.exec(QCursor.pos())
+        if chosen == act_move:
+            self._remove_selected(move=True)
+        elif chosen == act_del:
+            self._remove_selected(move=False)
+
+    def _reload_showing(self, name: str) -> None:
+        self._paths = slide_frames(self._folder)
+        idx = next((i for i, p in enumerate(self._paths) if p.name == name), None)
+        self._ref_index = idx if idx is not None else min(self._ref_index, max(0, len(self._paths) - 1))
+        self._canvas.reset()
+        self._refresh_ref()
+        self._filmstrip.set_session(self._paths)
+        self._filmstrip.set_browse_mode(True)
+        self._filmstrip.center_on(self._ref_index)
+        self._clear_range()
+        self._clear_selection()
+
+    def _remove_slide_at(self, index: int, move: bool) -> None:
+        name = self._paths[index].name
+        shown = self._paths[self._ref_index].name
+        if move:
+            if not move_slide(self._folder, name):
+                return
+        else:
+            if not delete_slide(self, self._folder, name):
+                return
+        self._reload_showing(shown if shown != name else "")
+
+    def _remove_selected(self, move: bool) -> None:
+        names = [self._paths[i].name for i in sorted(self._selection) if 0 <= i < len(self._paths)]
+        if not names:
+            return
+        if not move:
+            if not ask_yes_no(self, tr("multi.delete_title"), tr("multi.delete_body", n=len(names))):
+                return
+        shown = self._paths[self._ref_index].name if 0 <= self._ref_index < len(self._paths) else None
+        for name in names:
+            if move:
+                move_slide(self._folder, name)
+            else:
+                try:
+                    (self._folder / name).unlink()
+                except OSError:
+                    pass
+        self._reload_showing(shown if shown not in names else "")
+
+    # ----- action range -----
+    def _effective_range(self) -> tuple[int, int]:
+        lo = self._range_start if self._range_start is not None else 0
+        hi = self._range_end if self._range_end is not None else len(self._paths) - 1
+        return (min(lo, hi), max(lo, hi))
+
+    def _apply_range_highlight(self) -> None:
+        if self._range_start is None and self._range_end is None:
+            self._filmstrip.set_range(None)
+        else:
+            self._filmstrip.set_range(self._effective_range())
+
+    def _clear_range(self) -> None:
+        self._range_start = None
+        self._range_end = None
+        self._filmstrip.set_range(None)
 
     def _effective_range(self) -> tuple[int, int]:
         lo = self._range_start if self._range_start is not None else 0
@@ -295,11 +379,28 @@ class CropWindow(QWidget):
         self._range_end = None
         self._filmstrip.set_range(None)
 
+    def _update_selection(self, index: int, modifiers) -> None:
+        ctrl = bool(modifiers) and bool(modifiers & Qt.ControlModifier)
+        shift = bool(modifiers) and bool(modifiers & Qt.ShiftModifier)
+        if not ctrl and not shift:
+            self._selection = set()
+            self._anchor = index
+        else:
+            self._selection, self._anchor = next_selection(
+                list(range(len(self._paths))), self._selection, self._anchor, index, ctrl, shift)
+        self._filmstrip.set_selection(self._selection)
+
+    def _clear_selection(self) -> None:
+        self._selection = set()
+        self._anchor = None
+        self._filmstrip.set_selection(set())
+
     # ----- browsing -----
-    def _on_strip_click(self, frame_index: int) -> None:
+    def _on_strip_click(self, frame_index: int, modifiers=None) -> None:
         if 0 <= frame_index < len(self._paths):
             self._ref_index = frame_index
             self._refresh_ref()
+            self._update_selection(frame_index, modifiers)
             self._filmstrip.center_on(self._ref_index)
 
     def _step_ref(self, delta: int) -> None:
@@ -380,6 +481,7 @@ class CropWindow(QWidget):
         self._filmstrip.set_browse_mode(True)
         self._filmstrip.center_on(self._ref_index)
         self._clear_range()
+        self._clear_selection()
         self._status.setText(tr("crop.done", n=n))
 
 

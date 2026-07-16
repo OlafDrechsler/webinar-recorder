@@ -60,6 +60,7 @@ from core.settings import (
 )
 from gui.branding import APP_NAME, app_icon
 from gui.dialogs import ask_yes_no
+from gui.selection import next_selection
 from gui.slide_ops import adjust_slide_time, delete_slide, move_slide, slide_second
 from core.slide_dedupe import (
     COMPARE,
@@ -121,8 +122,8 @@ class SortFilmstrip(QWidget):
     GAP = 8
     CAP_H = 16
 
-    frame_clicked = Signal(int)  # left click: index into the frames list
-    frame_context = Signal(int)  # right click: index into the frames list
+    frame_clicked = Signal(int, object)  # left click: (index, keyboard modifiers)
+    frame_context = Signal(int)          # right click: index into the frames list
 
     def __init__(self) -> None:
         super().__init__()
@@ -133,6 +134,7 @@ class SortFilmstrip(QWidget):
         self._center: int | None = None  # browse offset; None = follow the baseline
         self._browse = False            # browse-only: highlight the centred frame
         self._range: tuple[int, int] | None = None  # highlighted action range (frame idx)
+        self._selected: set[int] = set()  # multi-select (frame indices)
         self._cache: dict[str, QPixmap] = {}
         self.setFixedHeight(self.THUMB_H + self.CAP_H + 12)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
@@ -147,6 +149,11 @@ class SortFilmstrip(QWidget):
     def set_range(self, rng: tuple[int, int] | None) -> None:
         """Highlight the frames of the action range (yellow band), or clear it."""
         self._range = rng
+        self.update()
+
+    def set_selection(self, indices) -> None:
+        """Highlight the multi-selected frames (a set of frame indices)."""
+        self._selected = set(indices)
         self.update()
 
     def begin_run(self, lo: int, hi: int) -> None:
@@ -230,7 +237,7 @@ class SortFilmstrip(QWidget):
             if event.button() == Qt.RightButton:
                 self.frame_context.emit(seq[pos])
             else:
-                self.frame_clicked.emit(seq[pos])
+                self.frame_clicked.emit(seq[pos], event.modifiers())
 
     # ----- rendering -----
     def _thumb(self, idx: int) -> QPixmap | None:
@@ -283,6 +290,8 @@ class SortFilmstrip(QWidget):
         if thumb is not None:
             p.drawPixmap(x + (self.THUMB_W - thumb.width()) // 2,
                          y + (self.THUMB_H - thumb.height()) // 2, thumb)
+        if idx in self._selected:  # multi-select tint on top of the thumbnail
+            p.fillRect(rect, QColor(45, 166, 255, 90))
         styles = {
             "baseline": (QColor(45, 166, 255), 3),
             "discard": (QColor(230, 40, 40), 4),
@@ -291,6 +300,8 @@ class SortFilmstrip(QWidget):
             "up": (QColor(70, 70, 70), 1),
         }
         col, w = styles.get(border, (QColor(70, 70, 70), 1))
+        if idx in self._selected:
+            col, w = QColor(45, 166, 255), 3  # bright selection border
         p.setPen(QPen(col, w))
         p.setBrush(Qt.NoBrush)
         p.drawRect(rect)
@@ -557,6 +568,8 @@ class SortOutWindow(QWidget):
         self._compare_idx = 0  # index of the last kept NON-annotated frame (compare ref)
         self._range_start: int | None = None  # action range (indices into _paths)
         self._range_end: int | None = None
+        self._selection: set[int] = set()  # multi-selected frame indices
+        self._anchor: int | None = None    # for shift-range selection
         self._step_timer = QTimer(self)
         self._step_timer.setSingleShot(True)
         self._step_timer.timeout.connect(self._do_phase)
@@ -603,25 +616,47 @@ class SortOutWindow(QWidget):
         self._filmstrip.set_browse_mode(True)     # highlight the shown slide while browsing
         self._filmstrip.center_on(self._ref_index)
         self._clear_range()
+        self._clear_selection()
         self._status.setText(tr("sort.no_slides") if not self._paths else "")
 
-    # ----- reference image -----
-    def _on_strip_click(self, frame_index: int) -> None:
-        """Show the clicked film-strip image in the big (reference) view, centred."""
-        if 0 <= frame_index < len(self._paths):
-            self._ref_index = frame_index
-            self._refresh_ref()
-            if not self._running:
-                self._filmstrip.center_on(self._ref_index)
+    # ----- reference image + multi-select -----
+    def _on_strip_click(self, frame_index: int, modifiers=None) -> None:
+        """Show the clicked film-strip image big; Ctrl/Shift build a multi-select."""
+        if not (0 <= frame_index < len(self._paths)):
+            return
+        self._ref_index = frame_index
+        self._refresh_ref()
+        if not self._running:
+            self._update_selection(frame_index, modifiers)
+            self._filmstrip.center_on(self._ref_index)
+
+    def _update_selection(self, index: int, modifiers) -> None:
+        ctrl = bool(modifiers) and bool(modifiers & Qt.ControlModifier)
+        shift = bool(modifiers) and bool(modifiers & Qt.ShiftModifier)
+        if not ctrl and not shift:
+            self._selection = set()   # plain click = browse, no lingering selection
+            self._anchor = index
+        else:
+            self._selection, self._anchor = next_selection(
+                list(range(len(self._paths))), self._selection, self._anchor, index, ctrl, shift)
+        self._filmstrip.set_selection(self._selection)
+
+    def _clear_selection(self) -> None:
+        self._selection = set()
+        self._anchor = None
+        self._filmstrip.set_selection(set())
 
     def _show_image_menu(self) -> None:
         """Right-click on the big image: act on THE SHOWN slide."""
         self._slide_menu_at(self._ref_index)
 
     def _slide_menu_at(self, index: int) -> None:
-        """Context menu for a slide (big image or film strip): adjust its time,
-        move/delete it, or bound the action range — never starts the auto run."""
+        """Context menu for a slide: bulk actions when several are selected,
+        otherwise the single-slide menu (adjust/move/delete/range)."""
         if self._running or not (0 <= index < len(self._paths)):
+            return
+        if len(self._selection) > 1 and index in self._selection:
+            self._bulk_menu()
             return
         menu = QMenu(self)
         act_time = menu.addAction(tr("player.adjust_time"))
@@ -648,6 +683,37 @@ class SortOutWindow(QWidget):
             self._apply_range_highlight()
         elif chosen == act_clear:
             self._clear_range()
+
+    def _bulk_menu(self) -> None:
+        n = len(self._selection)
+        menu = QMenu(self)
+        act_move = menu.addAction(tr("multi.move", n=n))
+        act_del = menu.addAction(tr("multi.delete", n=n))
+        chosen = menu.exec(QCursor.pos())
+        if chosen == act_move:
+            self._remove_selected(move=True)
+        elif chosen == act_del:
+            self._remove_selected(move=False)
+
+    def _remove_selected(self, move: bool) -> None:
+        names = [self._paths[i].name for i in sorted(self._selection)
+                 if 0 <= i < len(self._paths)]
+        if not names:
+            return
+        if not move:
+            if not ask_yes_no(self, tr("multi.delete_title"), tr("multi.delete_body", n=len(names))):
+                return
+        shown = self._paths[self._ref_index].name if 0 <= self._ref_index < len(self._paths) else None
+        for name in names:
+            if move:
+                move_slide(self._folder, name)
+            else:
+                try:
+                    (self._folder / name).unlink()
+                except OSError:
+                    pass
+        self._clear_selection()
+        self._reload_showing(shown if shown not in names else "")
 
     def _effective_range(self) -> tuple[int, int]:
         """(lo, hi) the action applies to; full list when no bound is set."""
@@ -829,6 +895,7 @@ class SortOutWindow(QWidget):
         self._filmstrip.set_session(self._paths)  # back to browse view
         self._filmstrip.set_browse_mode(True)
         self._clear_range()
+        self._clear_selection()
         self._ref_index = min(self._ref_index, max(0, len(self._paths) - 1))
         self._refresh_ref()
         self._filmstrip.center_on(self._ref_index)
@@ -857,6 +924,7 @@ class SortOutWindow(QWidget):
         self._baseline_frame = None
         self._next_phase = "compare"
         self._compare_idx = lo
+        self._clear_selection()
         self._filmstrip.set_session(self._paths)
         self._filmstrip.begin_run(lo, hi)  # process only [lo, hi]; baseline = lo
         self._running = True
@@ -965,6 +1033,7 @@ class SortOutWindow(QWidget):
         self._step_timer.stop()
         self._set_run_ui(False)
         self._clear_range()
+        self._clear_selection()
         # The last kept slide of the processed range = the final baseline (current
         # reference). Remember it by name so we can re-centre it after any removals
         # shift the indices.

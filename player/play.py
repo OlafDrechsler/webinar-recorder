@@ -65,6 +65,7 @@ from core.slide_timeline import slide_for_second
 from io_adapters.encode import trim_audio
 from gui.branding import APP_NAME, app_icon
 from gui.dialogs import ask_yes_no
+from gui.selection import next_selection
 from gui.slide_ops import adjust_slide_time, delete_slide, move_slide
 from gui.icons import pause_icon, play_icon, skip_back_icon, skip_forward_icon
 from gui.work_area import WorkAreaWindow
@@ -306,17 +307,24 @@ class SlideLabel(QLabel):
 class _Cell(QWidget):
     """One film-strip thumbnail with its filename underneath; clickable."""
 
-    clicked = Signal(int)
+    clicked = Signal(int, object)   # (index, keyboard modifiers)
     context = Signal(int)
 
-    def __init__(self, index: int, pixmap: QPixmap | None, caption_text: str, current: bool) -> None:
+    def __init__(self, index: int, pixmap: QPixmap | None, caption_text: str,
+                 current: bool, selected: bool = False) -> None:
         super().__init__()
         self._index = index
         thumb = QLabel()
         thumb.setFixedSize(FilmstripBar.THUMB_W, FilmstripBar.THUMB_H)
         thumb.setAlignment(Qt.AlignCenter)
-        border = "#2da6ff" if current else "#333"
-        thumb.setStyleSheet(f"background:#0e0e0e;border:2px solid {border};")
+        if selected:
+            border, width = "#2da6ff", 3
+        elif current:
+            border, width = "#2da6ff", 2
+        else:
+            border, width = "#333", 2
+        bg = "#12354d" if selected else "#0e0e0e"  # tinted when multi-selected
+        thumb.setStyleSheet(f"background:{bg};border:{width}px solid {border};")
         if pixmap is not None:
             thumb.setPixmap(pixmap)
         caption = QLabel(caption_text)
@@ -334,7 +342,7 @@ class _Cell(QWidget):
         if event.button() == Qt.RightButton:
             self.context.emit(self._index)
         else:
-            self.clicked.emit(self._index)
+            self.clicked.emit(self._index, event.modifiers())
 
 
 class _Empty(QWidget):
@@ -348,8 +356,8 @@ class _Empty(QWidget):
 class FilmstripBar(QWidget):
     """Horizontal strip of thumbnails, current centred, empty slots at the edges."""
 
-    frame_clicked = Signal(object)   # the clicked item (slide or mic dict)
-    frame_context = Signal(object)   # right-clicked item
+    frame_clicked = Signal(object, object)  # (clicked item, keyboard modifiers)
+    frame_context = Signal(object)          # right-clicked item
     THUMB_W = 140
     THUMB_H = 84
     GAP = 8
@@ -359,6 +367,7 @@ class FilmstripBar(QWidget):
         self._slides_dir: Path | None = None
         self._items: list = []
         self._current = 0
+        self._selected: set[str] = set()  # multi-selected slide names
         self._cache: dict[str, QPixmap] = {}
         self._row = QHBoxLayout(self)
         self._row.setContentsMargins(6, 4, 6, 4)
@@ -389,6 +398,11 @@ class FilmstripBar(QWidget):
         self._items = items
         self._current = 0
         self._cache.clear()
+        self._rebuild()
+
+    def set_selection(self, names) -> None:
+        """Highlight the multi-selected slides (a set of slide filenames)."""
+        self._selected = set(names)
         self._rebuild()
 
     def set_current_slide(self, name: str) -> None:
@@ -474,10 +488,12 @@ class FilmstripBar(QWidget):
                 self._row.addWidget(_Empty())
                 continue
             item = self._items[idx]
-            cell = _Cell(idx, self._pixmap_for(item), self._caption_for(item), idx == self._current)
+            selected = item.get("name") in self._selected
+            cell = _Cell(idx, self._pixmap_for(item), self._caption_for(item),
+                         idx == self._current, selected)
             # Bind the item itself (not the index): a stale cell that is still
             # around during a rebuild can then never hit a shifted/shorter list.
-            cell.clicked.connect(lambda _i, it=item: self.frame_clicked.emit(it))
+            cell.clicked.connect(lambda _i, mods, it=item: self.frame_clicked.emit(it, mods))
             cell.context.connect(lambda _i, it=item: self.frame_context.emit(it))
             self._row.addWidget(cell)
 
@@ -516,6 +532,8 @@ class Player(QWidget):
         self._current_slide: str | None = None
         self._segments: list[MicSegment] = []
         self._editor: WorkAreaWindow | None = None
+        self._selection: set[str] = set()  # multi-selected slide names
+        self._anchor: str | None = None
 
         # Master = system audio (persists across folder switches).
         self._system = QMediaPlayer()
@@ -716,6 +734,8 @@ class Player(QWidget):
         self._rebuild_segment_menu()
         self._slider.setValue(0)
         self._time.setText("00:00 / 00:00")
+        self._selection = set()
+        self._anchor = None
         self._filmstrip.set_session(self._slides_dir, self._build_strip_items())
         self._update_play_icons(False)
 
@@ -766,14 +786,34 @@ class Player(QWidget):
         self.show_slide(frame.name)
         self._seek(frame.second * 1000)
 
-    def _on_frame_clicked(self, item: dict) -> None:
+    def _on_frame_clicked(self, item: dict, modifiers=None) -> None:
         if item["kind"] == "mic":
             # Same as picking the segment from the bottom-right dropdown: jump there
             # (the slide-before is shown via _update_slide) and start playing.
+            self._clear_selection()
             self._jump_to_segment_ms(item["start_ms"])
             return
-        self.show_slide(item["name"])
+        name = item["name"]
+        self.show_slide(name)
         self._seek(item["second"] * 1000)
+        self._update_selection(name, modifiers)
+
+    def _update_selection(self, name: str, modifiers) -> None:
+        ctrl = bool(modifiers) and bool(modifiers & Qt.ControlModifier)
+        shift = bool(modifiers) and bool(modifiers & Qt.ShiftModifier)
+        if not ctrl and not shift:
+            self._selection = set()   # plain click = browse
+            self._anchor = name
+        else:
+            order = [f.name for f in self._frames]  # slide names in strip order
+            self._selection, self._anchor = next_selection(
+                order, self._selection, self._anchor, name, ctrl, shift)
+        self._filmstrip.set_selection(self._selection)
+
+    def _clear_selection(self) -> None:
+        self._selection = set()
+        self._anchor = None
+        self._filmstrip.set_selection(set())
 
     # ----- annotate while watching -----
     def _open_editor(self) -> None:
@@ -946,8 +986,50 @@ class Player(QWidget):
             elif chosen == act_del:
                 self._remove_segment(item["start_ms"], move=False)
             return
-        # A slide in the strip: same menu as the big image, minus 'Aufnahme verwerfen'.
-        self._show_slide_context_menu(item["name"], allow_discard=False)
+        name = item["name"]
+        # Several slides selected -> bulk move/delete of the selection.
+        if len(self._selection) > 1 and name in self._selection:
+            self._bulk_menu()
+            return
+        # A single slide: same menu as the big image, minus 'Aufnahme verwerfen'.
+        self._show_slide_context_menu(name, allow_discard=False)
+
+    def _bulk_menu(self) -> None:
+        n = len(self._selection)
+        menu = QMenu(self)
+        act_move = menu.addAction(tr("multi.move", n=n))
+        act_del = menu.addAction(tr("multi.delete", n=n))
+        chosen = menu.exec(QCursor.pos())
+        if chosen == act_move:
+            self._remove_selected(move=True)
+        elif chosen == act_del:
+            self._remove_selected(move=False)
+
+    def _remove_selected(self, move: bool) -> None:
+        if self._slides_dir is None:
+            return
+        names = [n for n in self._selection if n in self._index_of]
+        if not names:
+            return
+        if not move:
+            if not ask_yes_no(self, tr("multi.delete_title"), tr("multi.delete_body", n=len(names))):
+                return
+        was_current = self._current_slide in names
+        for name in names:
+            if move:
+                move_slide(self._slides_dir, name)
+            else:
+                try:
+                    (self._slides_dir / name).unlink()
+                except OSError:
+                    pass
+        self._clear_selection()
+        self._refresh_frames()
+        if was_current:
+            self._current_slide = None
+            self._update_slide(int(self._system.position() // 1000))
+            if self._current_slide is None and self._frames:
+                self.show_slide(self._frames[0].name)
 
     def _remove_segment(self, start_ms: int, move: bool) -> None:
         """Move (to mikro/_aussortiert) or delete a mic segment file, then refresh
