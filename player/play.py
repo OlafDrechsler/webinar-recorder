@@ -949,7 +949,9 @@ class Player(QWidget):
             return
         path = seg.path
         if not move:
-            if not ask_yes_no(self, tr("player.delete_seg_title"), tr("player.delete_body", name=path.name)):
+            body = tr("player.delete_seg_body", name=path.name,
+                      start=_fmt(seg.start_ms), end=_fmt(seg.start_ms + seg.duration))
+            if not ask_yes_no(self, tr("player.delete_seg_title"), body):
                 return
         # Release the file handle before touching the file (Windows locks it);
         # Qt frees it asynchronously, so pump events until the file is writable.

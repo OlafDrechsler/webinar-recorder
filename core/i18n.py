@@ -611,6 +611,16 @@ TRANSLATIONS: dict[str, dict] = {
                                   "¿Eliminar segmento de micrófono?", "Eliminare segmento microfono?",
                                   "Apagar segmento de microfone?", "Microfoonsegment verwijderen?",
                                   "Usunąć segment mikrofonu?", "Mikrofon segmenti silinsin mi?"),
+    "player.delete_seg_body": _t(
+        "Datei '{name}' ({start}-{end}) wirklich löschen?",
+        "Really delete file '{name}' ({start}-{end})?",
+        "Supprimer vraiment le fichier '{name}' ({start}-{end}) ?",
+        "¿Eliminar realmente el archivo '{name}' ({start}-{end})?",
+        "Eliminare davvero il file '{name}' ({start}-{end})?",
+        "Apagar mesmo o ficheiro '{name}' ({start}-{end})?",
+        "Bestand '{name}' ({start}-{end}) echt verwijderen?",
+        "Na pewno usunąć plik '{name}' ({start}-{end})?",
+        "'{name}' ({start}-{end}) dosyası gerçekten silinsin mi?"),
 }
 
 
