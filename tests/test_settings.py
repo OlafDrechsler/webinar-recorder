@@ -30,6 +30,25 @@ def test_set_and_get_data_dir_roundtrip(monkeypatch, tmp_path):
     assert (tmp_path / "settings.json").exists()
 
 
+def test_last_session_none_when_unset(monkeypatch, tmp_path):
+    s = _reload_with_config(monkeypatch, tmp_path / "settings.json")
+    assert s.get_last_session() is None
+
+
+def test_last_session_roundtrip_when_folder_exists(monkeypatch, tmp_path):
+    s = _reload_with_config(monkeypatch, tmp_path / "settings.json")
+    webinar = tmp_path / "Webinar_A"
+    webinar.mkdir()
+    s.set_last_session(webinar)
+    assert s.get_last_session() == webinar
+
+
+def test_last_session_ignored_when_folder_gone(monkeypatch, tmp_path):
+    s = _reload_with_config(monkeypatch, tmp_path / "settings.json")
+    s.set_last_session(tmp_path / "deleted_webinar")  # never created
+    assert s.get_last_session() is None
+
+
 def test_corrupt_file_falls_back_to_empty(monkeypatch, tmp_path):
     cfg = tmp_path / "settings.json"
     cfg.write_text("{ not valid json", encoding="utf-8")

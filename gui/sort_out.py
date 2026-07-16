@@ -51,7 +51,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.filmstrip import build_filmstrip
 from core.i18n import tr
 from core.naming import is_annotated
-from core.settings import get_data_dir, get_sortout_config, set_sortout_config
+from core.settings import (
+    get_data_dir,
+    get_last_session,
+    get_sortout_config,
+    set_last_session,
+    set_sortout_config,
+)
 from gui.branding import APP_NAME, app_icon
 from gui.dialogs import ask_yes_no
 from gui.slide_ops import adjust_slide_time, delete_slide, move_slide, slide_second
@@ -86,11 +92,18 @@ def slide_frames(folder: Path) -> list[Path]:
     return [folder / f.name for f in build_filmstrip(names)]
 
 
+def webinar_dir(folder: Path) -> Path:
+    """The webinar folder for a slides folder: the parent when we resolved into a
+    ``folien`` subfolder, else the folder itself. This is the value shared between
+    tools (the player opens it directly; sort/crop resolve back into ``folien``)."""
+    return folder.parent if folder.name == "folien" else folder
+
+
 def webinar_name(folder: Path) -> str:
     """Meaningful folder name for the header: the parent (webinar) name when we
     resolved into a ``folien`` subfolder, otherwise the folder's own name — so it
     reads the same as the player instead of just 'folien'."""
-    return folder.parent.name if folder.name == "folien" else folder.name
+    return webinar_dir(folder).name
 
 
 class SortFilmstrip(QWidget):
@@ -579,6 +592,7 @@ class SortOutWindow(QWidget):
         if not slide_frames(folder) and (folder / "folien").is_dir() and slide_frames(folder / "folien"):
             folder = folder / "folien"
         self._folder = folder
+        set_last_session(webinar_dir(self._folder))  # share the folder with the other tools
         self._paths = slide_frames(self._folder)
         self._ref_index = 0
         self._path_lbl.setText(webinar_name(self._folder))
@@ -989,8 +1003,9 @@ class SortOutWindow(QWidget):
 
 
 def open_sorter(folder: Path | None = None) -> SortOutWindow:
-    """Open the sort-out window; the folder is chosen inside the window."""
-    win = SortOutWindow(folder)
+    """Open the sort-out window; defaults to the folder shared with the other
+    tools (last recorded/opened) when none is given."""
+    win = SortOutWindow(folder or get_last_session())
     win.setWindowIcon(app_icon())
     win.show()
     return win

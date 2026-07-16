@@ -27,6 +27,7 @@ _MIC_DEVICE_KEY = "mic_device"
 _PLAYER_VOL_KEY = "player_volumes"
 _SORTOUT_KEY = "sortout_config"
 _LANGUAGE_KEY = "language"
+_LAST_SESSION_KEY = "last_session"
 
 
 def config_path() -> Path:
@@ -144,6 +145,24 @@ def set_sortout_config(config: dict) -> None:
     """Remember the slide-deduplication mask/threshold for next time."""
     settings = load_settings()
     settings[_SORTOUT_KEY] = config
+    save_settings(settings)
+
+
+def get_last_session() -> Path | None:
+    """The webinar folder last opened/recorded in any tool, if it still exists — so
+    the player, sort-out and crop tools share the same folder without re-picking."""
+    stored = load_settings().get(_LAST_SESSION_KEY)
+    if stored:
+        p = Path(stored)
+        if p.is_dir():
+            return p
+    return None
+
+
+def set_last_session(path: str | os.PathLike) -> None:
+    """Remember ``path`` (the webinar folder) as the shared session for all tools."""
+    settings = load_settings()
+    settings[_LAST_SESSION_KEY] = str(path)
     save_settings(settings)
 
 

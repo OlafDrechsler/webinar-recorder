@@ -26,7 +26,7 @@ from PySide6.QtWidgets import QApplication, QProgressDialog
 
 from core.i18n import tr
 from core.loudness import aggregate_mean_db, compute_gain_db
-from core.settings import get_mic_device
+from core.settings import get_mic_device, set_last_session
 from gui.branding import app_icon
 from gui.control_window import ControlWindow
 from io_adapters.encode import ffmpeg_available, measure_loudness, transcode_to_mp3
@@ -38,6 +38,8 @@ def launch_recording() -> ControlWindow:
     Usable from the hub (no QApplication ownership)."""
 
     def on_process(system_wav: Path, segments: list[Path]) -> None:
+        # Share the just-recorded folder so the player/sort/crop tools open it.
+        set_last_session(system_wav.parent)
         if ffmpeg_available():
             _run_postprocessing_with_progress(system_wav, segments)
         print(f"Aufnahme gespeichert: {system_wav.parent} | Mikro-Segmente: {len(segments)}")

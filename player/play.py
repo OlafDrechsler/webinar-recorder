@@ -54,7 +54,13 @@ from core.filmstrip import build_filmstrip, visible_slots
 from core.i18n import tr
 from core.mic_playback import parse_segment_start, segment_local_offset
 from core.playback import SEEK_STEP_MS, seek_target, speed_percent_values
-from core.settings import get_data_dir, get_player_volumes, set_player_volumes
+from core.settings import (
+    get_data_dir,
+    get_last_session,
+    get_player_volumes,
+    set_last_session,
+    set_player_volumes,
+)
 from core.slide_timeline import slide_for_second
 from io_adapters.encode import trim_audio
 from gui.branding import APP_NAME, app_icon
@@ -672,6 +678,8 @@ class Player(QWidget):
             seg.dispose()
         self._segments = []
 
+        session = Path(session)
+        set_last_session(session)  # share the folder with the sort/crop tools
         self._slides_dir = session / "folien"
         names = [p.name for p in self._slides_dir.glob("*.png")] if self._slides_dir.is_dir() else []
         self._frames = build_filmstrip(names)
@@ -1157,8 +1165,9 @@ class Player(QWidget):
 
 
 def open_player(session: Path | None = None) -> Player:
-    """Create and show a player window (for the hub / in-process use)."""
-    win = Player(session)
+    """Create and show a player window (for the hub / in-process use); defaults to
+    the folder shared with the other tools (last recorded/opened)."""
+    win = Player(session or get_last_session())
     win.setWindowIcon(app_icon())
     # Destroy on close (like the recorder) so the hub opens a fresh player next
     # time instead of re-showing a torn-down one — and the media objects are

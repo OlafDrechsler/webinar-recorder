@@ -32,10 +32,17 @@ from PySide6.QtWidgets import (
 
 from core.crop import Box, crop_folder
 from core.i18n import tr
-from core.settings import get_data_dir
+from core.settings import get_data_dir, get_last_session, set_last_session
 from gui.branding import APP_NAME, app_icon
 from gui.dialogs import ask_yes_no
-from gui.sort_out import SortFilmstrip, frame_to_qpixmap, load_frame, slide_frames, webinar_name
+from gui.sort_out import (
+    SortFilmstrip,
+    frame_to_qpixmap,
+    load_frame,
+    slide_frames,
+    webinar_dir,
+    webinar_name,
+)
 
 
 class CropCanvas(QWidget):
@@ -240,6 +247,7 @@ class CropWindow(QWidget):
         if not slide_frames(folder) and (folder / "folien").is_dir() and slide_frames(folder / "folien"):
             folder = folder / "folien"
         self._folder = folder
+        set_last_session(webinar_dir(self._folder))  # share the folder with the other tools
         self._paths = slide_frames(self._folder)
         self._ref_index = 0
         self._path_lbl.setText(webinar_name(self._folder))
@@ -376,7 +384,7 @@ class CropWindow(QWidget):
 
 
 def open_cropper(folder: Path | None = None) -> CropWindow:
-    win = CropWindow(folder)
+    win = CropWindow(folder or get_last_session())
     win.setWindowIcon(app_icon())
     win.show()
     return win
