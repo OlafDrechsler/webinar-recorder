@@ -73,8 +73,9 @@ def test_sort_run_uses_range_and_first_is_reference(tmp_path, monkeypatch):
     s._ref_index = 2  # inside the range
     s._run()
     assert s._running
-    assert s._filmstrip._history == [1] and s._filmstrip._upcoming == [2, 3]
-    assert s._ref_index == 1  # first slide of the range became the reference
+    # the scan is set up over [1, 3] with the first of the range as the baseline
+    assert s._compare_idx == 1 and s._cand == 2 and s._run_hi == 3
+    assert s._ref_index == 1  # first slide of the range shown at run start
     s._cancel_run()
     assert s._range_start is None and s._filmstrip._range is None  # cleared
 
@@ -99,33 +100,38 @@ def _solid(color):
     return a
 
 
-def test_sort_after_range_run_restores_full_strip_centred_on_last_kept(tmp_path, monkeypatch):
+def test_sort_range_run_marks_only_range_then_execute(tmp_path, monkeypatch):
     monkeypatch.setattr(so, "ask_yes_no", lambda *a, **k: True)
     monkeypatch.setattr(so.QMessageBox, "information", staticmethod(lambda *a, **k: None))
     fol = tmp_path / "Webinar" / "folien"
     fol.mkdir(parents=True)
-    # 0 blue | 1,2,3 identical red | 4 green -> within range [1,3], 1 kept, 2&3 dropped
+    # 0 blue | 1,2,3 identical red | 4 green -> within range [1,3]: 1 baseline, 2&3 marked
     for i, c in {0: (0, 0, 255), 1: (255, 0, 0), 2: (255, 0, 0), 3: (255, 0, 0), 4: (0, 255, 0)}.items():
         Image.fromarray(_solid(c), "RGB").save(str(fol / f"{i * 10:05d}.png"))
 
     s = SortOutWindow()
-    s._action = "move"
     s._load_folder(tmp_path / "Webinar")
+    s._action = "move"
     s._range_start, s._range_end = 1, 3
     s._apply_range_highlight()
     s._ref_index = 1
     s._run()
-    assert s._filmstrip._history == [1] and s._filmstrip._upcoming == [2, 3]  # only range during run
     guard = 0
     while s._running and guard < 100:
         s._do_phase()
         guard += 1
 
+    # nothing applied yet — only marked, all frames still present
+    assert s._marked == {"00020.png", "00030.png"}
+    assert sorted(p.name for p in fol.glob("*.png")) == [
+        "00000.png", "00010.png", "00020.png", "00030.png", "00040.png"]
+    assert s._exec_btn.isEnabled()
+
+    s._execute_marked()  # now apply
     assert sorted(p.name for p in fol.glob("*.png")) == ["00000.png", "00010.png", "00040.png"]
-    assert len(s._paths) == 3                       # full folder shown again, not just range
-    assert s._filmstrip._range is None              # highlight cleared
-    assert s._paths[s._ref_index].name == "00010.png"                        # last kept shown big
-    assert s._paths[s._filmstrip._effective_center()].name == "00010.png"    # ...and centred
+    assert sorted(p.name for p in (fol / "_aussortiert").glob("*.png")) == ["00020.png", "00030.png"]
+    assert s._marked == set() and s._filmstrip.count() == 3
+    assert not s._exec_btn.isEnabled()
 
 
 def test_crop_after_range_shows_all_and_clears_range(tmp_path, monkeypatch):
@@ -142,7 +148,7 @@ def test_crop_after_range_shows_all_and_clears_range(tmp_path, monkeypatch):
     c._start()
     assert len(c._paths) == 5                        # all slides still in the strip
     assert c._filmstrip._range is None               # band cleared
-    assert len(c._filmstrip._history) + len(c._filmstrip._upcoming) == 5
+    assert c._filmstrip.count() == 5
 
 
 def test_crop_only_crops_selected_range(tmp_path, monkeypatch):

@@ -108,13 +108,11 @@ def webinar_name(folder: Path) -> str:
 
 
 class SortFilmstrip(QWidget):
-    """Animated film strip for the dedup run.
-
-    The current baseline is always centred; kept baselines stack to the left
-    (history stays visible), upcoming candidates queue to the right. The
-    candidate (immediately right of centre) gets a red frame when it is about to
-    be discarded, then slides out so the rest shift left. Drawn via paintEvent
-    with cached thumbnails so it stays fast even at high speed.
+    """Film strip that keeps EVERY frame visible. A dedup run walks a scan pointer
+    across the frames and paints duplicates with a persistent red border (they are
+    NOT removed) so the user can review and adjust them afterwards. Frame index ==
+    strip position. Independent visual channels: red border = duplicate mark, blue
+    fill = multi-selection, so a cell can carry both at once.
     """
 
     THUMB_W = 116
@@ -128,116 +126,79 @@ class SortFilmstrip(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self._frames: list[Path] = []
-        self._history: list[int] = []   # kept baselines; last item = current baseline
-        self._upcoming: list[int] = []  # not yet processed; [0] = next candidate
-        self._discard_pending = False
-        self._center: int | None = None  # browse offset; None = follow the baseline
-        self._browse = False            # browse-only: highlight the centred frame
-        self._range: tuple[int, int] | None = None  # highlighted action range (frame idx)
-        self._selected: set[int] = set()  # multi-select (frame indices)
+        self._center = 0
+        self._browse = False
+        self._range: tuple[int, int] | None = None   # yellow action-range band
+        self._selected: set[int] = set()             # multi-select (blue fill)
+        self._marked: set[int] = set()               # duplicates (red border)
+        self._scan: tuple[int, int] | None = None    # (baseline, candidate) during a run
         self._cache: dict[str, QPixmap] = {}
         self.setFixedHeight(self.THUMB_H + self.CAP_H + 12)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
 
+    def set_session(self, frames: list[Path]) -> None:
+        self._frames = list(frames)
+        self._cache.clear()
+        self._center = 0
+        self._marked = set()
+        self._scan = None
+        self.update()
+
+    def count(self) -> int:
+        return len(self._frames)
+
     def set_browse_mode(self, on: bool) -> None:
-        """Browse-only look: no dedup baseline/candidate frames — just highlight the
-        centred (currently shown) slide. Used by the crop tool."""
         self._browse = on
         self.update()
 
     def set_range(self, rng: tuple[int, int] | None) -> None:
-        """Highlight the frames of the action range (yellow band), or clear it."""
         self._range = rng
         self.update()
 
     def set_selection(self, indices) -> None:
-        """Highlight the multi-selected frames (a set of frame indices)."""
         self._selected = set(indices)
         self.update()
 
-    def begin_run(self, lo: int, hi: int) -> None:
-        """Start a dedup run restricted to frames [lo, hi]: the first of the range
-        becomes the baseline, only that range is processed and shown."""
-        self._history = [lo]
-        self._upcoming = list(range(lo + 1, hi + 1))
-        self._discard_pending = False
-        self._center = None
-        self._browse = False
+    def set_marked(self, indices) -> None:
+        """The duplicates (red border), kept in view until the action is run."""
+        self._marked = set(indices)
         self.update()
 
-    def set_session(self, frames: list[Path]) -> None:
-        self._frames = list(frames)
-        self._cache.clear()
-        self._history = [0] if self._frames else []
-        self._upcoming = list(range(1, len(self._frames)))
-        self._discard_pending = False
-        self._center = None
+    def set_scan(self, baseline: int, candidate: int) -> None:
+        """Highlight the current comparison (baseline + examined candidate) and
+        follow the candidate while the run animates."""
+        self._scan = (baseline, candidate)
         self.update()
 
-    # ----- state -----
-    def has_candidate(self) -> bool:
-        return bool(self._upcoming)
-
-    def baseline_index(self) -> int | None:
-        return self._history[-1] if self._history else None
-
-    def candidate_index(self) -> int | None:
-        return self._upcoming[0] if self._upcoming else None
-
-    def _seq(self) -> list[int]:
-        return self._history + self._upcoming
+    def clear_scan(self) -> None:
+        self._scan = None
+        self.update()
 
     def _effective_center(self) -> int:
-        if self._center is not None:
-            return self._center
-        return max(0, len(self._history) - 1)  # baseline position
+        return self._scan[1] if self._scan is not None else self._center
 
     def scroll(self, delta: int) -> None:
-        seq_len = len(self._history) + len(self._upcoming)
-        if seq_len:
-            self._center = max(0, min(seq_len - 1, self._effective_center() + delta))
+        if self._frames:
+            self._center = max(0, min(len(self._frames) - 1, self._effective_center() + delta))
             self.update()
 
     def center_on(self, frame_index: int) -> None:
-        """Centre the cell showing ``frame_index`` (used while browsing, so the
-        strip follows the big reference image)."""
-        seq = self._seq()
-        if frame_index in seq:
-            self._center = seq.index(frame_index)
-            self.update()
-
-    # ----- transitions (re-follow the baseline) -----
-    def mark_discard(self) -> None:
-        self._discard_pending = True
-        self.update()
-
-    def eject(self) -> int:
-        idx = self._upcoming.pop(0)
-        self._discard_pending = False
-        self._center = None
-        self.update()
-        return idx
-
-    def rebaseline(self) -> None:
-        if self._upcoming:
-            self._history.append(self._upcoming.pop(0))
-            self._discard_pending = False
-            self._center = None
+        if 0 <= frame_index < len(self._frames):
+            self._center = frame_index
             self.update()
 
     # ----- click -----
     def mousePressEvent(self, event) -> None:  # noqa: N802
-        seq = self._seq()
-        if not seq:
+        if not self._frames:
             return
         step = self.THUMB_W + self.GAP
         pos = self._effective_center() + round((event.position().x() - self.width() / 2) / step)
-        if 0 <= pos < len(seq):
+        if 0 <= pos < len(self._frames):
             if event.button() == Qt.RightButton:
-                self.frame_context.emit(seq[pos])
+                self.frame_context.emit(pos)
             else:
-                self.frame_clicked.emit(seq[pos], event.modifiers())
+                self.frame_clicked.emit(pos, event.modifiers())
 
     # ----- rendering -----
     def _thumb(self, idx: int) -> QPixmap | None:
@@ -254,34 +215,20 @@ class SortFilmstrip(QWidget):
     def paintEvent(self, event) -> None:  # noqa: N802
         p = QPainter(self)
         p.fillRect(self.rect(), QColor(22, 22, 22))
-        seq = self._seq()
-        if not seq:
+        if not self._frames:
             return
-        baseline_pos = len(self._history) - 1
-        candidate_pos = len(self._history) if self._upcoming else -1
         center = self._effective_center()
         step = self.THUMB_W + self.GAP
         cx = self.width() / 2
         n_side = int((self.width() / 2) // step) + 1
-        for pos in range(max(0, center - n_side), min(len(seq), center + n_side + 1)):
-            # Yellow backing band behind the frames that the action will affect.
-            if self._browse and self._range is not None and self._range[0] <= seq[pos] <= self._range[1]:
-                band_x = int(cx + (pos - center) * step - (self.THUMB_W + self.GAP) / 2)
+        for idx in range(max(0, center - n_side), min(len(self._frames), center + n_side + 1)):
+            if self._range is not None and self._range[0] <= idx <= self._range[1]:
+                band_x = int(cx + (idx - center) * step - (self.THUMB_W + self.GAP) / 2)
                 p.fillRect(QRect(band_x, 0, self.THUMB_W + self.GAP, self.height()),
                            QColor(150, 130, 30))
-            if self._browse:
-                border = "baseline" if pos == center else "up"  # highlight the shown one
-            elif pos == baseline_pos:
-                border = "baseline"
-            elif pos == candidate_pos:
-                border = "discard" if self._discard_pending else "candidate"
-            elif pos < baseline_pos:
-                border = "hist"
-            else:
-                border = "up"
-            self._draw_cell(p, cx + (pos - center) * step, seq[pos], border)
+            self._draw_cell(p, cx + (idx - center) * step, idx)
 
-    def _draw_cell(self, p: QPainter, center_x: float, idx: int, border: str) -> None:
+    def _draw_cell(self, p: QPainter, center_x: float, idx: int) -> None:
         x = int(center_x - self.THUMB_W / 2)
         y = 6
         rect = QRect(x, y, self.THUMB_W, self.THUMB_H)
@@ -290,18 +237,20 @@ class SortFilmstrip(QWidget):
         if thumb is not None:
             p.drawPixmap(x + (self.THUMB_W - thumb.width()) // 2,
                          y + (self.THUMB_H - thumb.height()) // 2, thumb)
-        if idx in self._selected:  # multi-select tint on top of the thumbnail
+        if idx in self._selected:  # multi-select tint (independent of the border)
             p.fillRect(rect, QColor(45, 166, 255, 90))
-        styles = {
-            "baseline": (QColor(45, 166, 255), 3),
-            "discard": (QColor(230, 40, 40), 4),
-            "candidate": (QColor(235, 200, 60), 2),
-            "hist": (QColor(70, 70, 70), 1),
-            "up": (QColor(70, 70, 70), 1),
-        }
-        col, w = styles.get(border, (QColor(70, 70, 70), 1))
-        if idx in self._selected:
-            col, w = QColor(45, 166, 255), 3  # bright selection border
+        # Border encodes state; priority: scan candidate > duplicate (red) > scan
+        # baseline > shown (browse) > plain.
+        if self._scan is not None and idx == self._scan[1]:
+            col, w = QColor(240, 240, 240), 3          # examining now
+        elif idx in self._marked:
+            col, w = QColor(230, 40, 40), 3            # duplicate
+        elif self._scan is not None and idx == self._scan[0]:
+            col, w = QColor(60, 200, 120), 2           # current baseline
+        elif self._scan is None and idx == self._center:
+            col, w = QColor(45, 166, 255), 2           # currently shown big
+        else:
+            col, w = QColor(70, 70, 70), 1
         p.setPen(QPen(col, w))
         p.setBrush(Qt.NoBrush)
         p.drawRect(rect)
@@ -528,44 +477,41 @@ class SortOutWindow(QWidget):
         self._pause_btn = QPushButton(tr("sort.pause"))
         self._pause_btn.clicked.connect(self._toggle_pause)
         self._pause_btn.setVisible(False)
-        self._keep_btn = QPushButton(tr("sort.keep"))
-        self._keep_btn.clicked.connect(self._override_keep)
-        self._keep_btn.setVisible(False)
-        self._discard_btn = QPushButton(tr("sort.discard"))
-        self._discard_btn.clicked.connect(self._override_discard)
-        self._discard_btn.setVisible(False)
         run_row = QHBoxLayout()
         run_row.addWidget(QLabel(tr("sort.speed_slow")))
         run_row.addWidget(self._speed, stretch=1)
         run_row.addWidget(QLabel(tr("sort.speed_fast")))
         run_row.addSpacing(12)
         run_row.addWidget(self._pause_btn)
-        run_row.addWidget(self._keep_btn)
-        run_row.addWidget(self._discard_btn)
 
-        # Action toggle + Start.
+        # Action toggle + Start (mark) + Execute (apply the red marks).
         self._action_btn = QPushButton()
         self._action_btn.clicked.connect(self._toggle_action)
         self._run_btn = QPushButton(tr("common.start"))
         self._run_btn.setStyleSheet("font-weight: bold; padding: 6px;")
         self._run_btn.clicked.connect(self._on_run_clicked)
+        self._exec_btn = QPushButton()
+        self._exec_btn.setStyleSheet("font-weight: bold; padding: 6px;")
+        self._exec_btn.clicked.connect(self._execute_marked)
         action_row = QHBoxLayout()
         action_row.addStretch(1)
-        action_row.addWidget(self._action_btn)  # directly left of Start
+        action_row.addWidget(self._action_btn)
         action_row.addWidget(self._run_btn)
+        action_row.addWidget(self._exec_btn)  # right-aligned, dimmed until marks exist
 
         self._status = QLabel()
 
         # Run state.
         self._running = False
         self._paused = False
-        self._next_phase = "compare"
-        self._removals: list[Path] = []
         self._mask = None
         self._fraction_val = 0.005
         self._baseline_idx: int | None = None
         self._baseline_frame = None
         self._compare_idx = 0  # index of the last kept NON-annotated frame (compare ref)
+        self._cand = 0         # next candidate index the scan will examine
+        self._run_hi = 0       # last index of the scanned range
+        self._marked: set[str] = set()  # names of duplicates (red), kept for review
         self._range_start: int | None = None  # action range (indices into _paths)
         self._range_end: int | None = None
         self._selection: set[int] = set()  # multi-selected frame indices
@@ -588,6 +534,7 @@ class SortOutWindow(QWidget):
 
         self._update_thr_label(self._thr.value())
         self._refresh_mode_labels()
+        self._refresh_exec_btn()
         if folder is not None:
             self._load_folder(folder)
 
@@ -617,6 +564,9 @@ class SortOutWindow(QWidget):
         self._filmstrip.center_on(self._ref_index)
         self._clear_range()
         self._clear_selection()
+        self._marked = set()
+        self._filmstrip.set_marked(set())
+        self._refresh_exec_btn()
         self._status.setText(tr("sort.no_slides") if not self._paths else "")
 
     # ----- reference image + multi-select -----
@@ -659,6 +609,7 @@ class SortOutWindow(QWidget):
             self._bulk_menu()
             return
         menu = QMenu(self)
+        act_mark = menu.addAction(tr("sort.toggle_mark"))  # flip Baseline/Doublette
         act_time = menu.addAction(tr("player.adjust_time"))
         menu.addSeparator()
         act_move = menu.addAction(tr("sort.menu_move"))
@@ -669,7 +620,9 @@ class SortOutWindow(QWidget):
         act_clear = menu.addAction(tr("range.clear"))
         act_clear.setEnabled(self._range_start is not None or self._range_end is not None)
         chosen = menu.exec(QCursor.pos())
-        if chosen == act_time:
+        if chosen == act_mark:
+            self._toggle_mark(index)
+        elif chosen == act_time:
             self._adjust_slide_time_at(index)
         elif chosen == act_move:
             self._remove_slide_at(index, move=True)
@@ -687,10 +640,14 @@ class SortOutWindow(QWidget):
     def _bulk_menu(self) -> None:
         n = len(self._selection)
         menu = QMenu(self)
+        act_mark = menu.addAction(tr("sort.toggle_mark_n", n=n))
+        menu.addSeparator()
         act_move = menu.addAction(tr("multi.move", n=n))
         act_del = menu.addAction(tr("multi.delete", n=n))
         chosen = menu.exec(QCursor.pos())
-        if chosen == act_move:
+        if chosen == act_mark:
+            self._toggle_mark_selected()
+        elif chosen == act_move:
             self._remove_selected(move=True)
         elif chosen == act_del:
             self._remove_selected(move=False)
@@ -741,6 +698,8 @@ class SortOutWindow(QWidget):
         self._refresh_ref()
         self._filmstrip.set_session(self._paths)
         self._filmstrip.center_on(self._ref_index)
+        self._push_marks()  # marks are by name -> survive the reload
+        self._refresh_exec_btn()
 
     def _remove_slide_at(self, index: int, move: bool) -> None:
         name = self._paths[index].name
@@ -885,23 +844,26 @@ class SortOutWindow(QWidget):
             self._run()
 
     def _cancel_run(self) -> None:
-        """Abort the run without applying anything: removals are only executed in
-        _finish, so cancelling simply drops the collected list."""
+        """Abort the marking run: nothing was applied, so just drop the marks."""
         self._running = False
         self._paused = False
         self._step_timer.stop()
-        self._removals = []
-        self._set_run_ui(False)
-        self._filmstrip.set_session(self._paths)  # back to browse view
+        self._marked = set()
+        self._filmstrip.clear_scan()
+        self._filmstrip.set_marked(set())
         self._filmstrip.set_browse_mode(True)
+        self._set_run_ui(False)
         self._clear_range()
         self._clear_selection()
         self._ref_index = min(self._ref_index, max(0, len(self._paths) - 1))
         self._refresh_ref()
         self._filmstrip.center_on(self._ref_index)
+        self._refresh_exec_btn()
         self._status.setText(tr("sort.cancelled"))
 
     def _run(self) -> None:
+        """Start (Start button): walk the range and MARK duplicates red. Nothing is
+        moved/deleted here — the user reviews the marks and then runs 'Ausführen'."""
         if self._running:
             return
         mask = self._current_mask()
@@ -909,36 +871,29 @@ class SortOutWindow(QWidget):
             QMessageBox.information(self, tr("sort.nothing_title"), tr("sort.nothing_body"))
             return
         lo, hi = self._effective_range()
-        # Warn if the mask was drawn on a slide that won't even be processed.
-        if not (lo <= self._ref_index <= hi):
+        if not (lo <= self._ref_index <= hi):  # mask drawn on a slide not scanned?
             if not ask_yes_no(self, tr("range.outside_title"), tr("range.outside_body")):
-                return
-        if self._action == "delete":
-            if not ask_yes_no(self, tr("sort.delete_confirm_title"), tr("sort.delete_confirm_body")):
                 return
         set_sortout_config(self._config_dict())
         self._mask = mask
         self._fraction_val = self._fraction()
-        self._removals = []
         self._baseline_idx = None
         self._baseline_frame = None
-        self._next_phase = "compare"
         self._compare_idx = lo
+        self._cand = lo + 1
+        self._run_hi = hi
+        self._marked = set()
         self._clear_selection()
-        self._filmstrip.set_session(self._paths)
-        self._filmstrip.begin_run(lo, hi)  # process only [lo, hi]; baseline = lo
+        self._clear_range()
+        self._filmstrip.set_session(self._paths)  # resets marks/scan
+        self._filmstrip.set_browse_mode(False)
         self._running = True
         self._paused = False
         self._set_run_ui(True)
-        self._show_baseline_big()  # first reference = first slide of the range
+        self._ref_index = lo
+        self._refresh_ref()
+        self._filmstrip.set_scan(self._compare_idx, min(self._cand, hi))
         self._schedule()
-
-    def _show_baseline_big(self) -> None:
-        """Show the current baseline (reference) slide as the big image."""
-        idx = self._filmstrip.baseline_index()
-        if idx is not None and 0 <= idx < len(self._paths):
-            self._ref_index = idx
-            self._refresh_ref()
 
     def _schedule(self) -> None:
         if self._running and not self._paused:
@@ -947,128 +902,126 @@ class SortOutWindow(QWidget):
     def _do_phase(self) -> None:
         if not self._running or self._paused:
             return
-        if not self._filmstrip.has_candidate():
-            self._finish()
+        if self._cand > self._run_hi:
+            self._end_run()
             return
-        if self._next_phase == "compare":
-            cand_idx = self._filmstrip.candidate_index()
-            if is_annotated(self._paths[cand_idx].name):
-                # Annotated frames are always kept — shown, never removed — and do
-                # NOT become the comparison reference, so a duplicate that follows
-                # one is still caught against the previous real slide.
-                self._filmstrip.rebaseline()
-                self._show_baseline_big()
-                self._next_phase = "compare"
+        cand = self._cand
+        if is_annotated(self._paths[cand].name):
+            pass  # annotated frames are never marked and never become the baseline
+        else:
+            base = self._baseline_frame_for(self._compare_idx)
+            img = load_frame(self._paths[cand])
+            if masked_frames_differ(base, img, self._mask, fraction_threshold=self._fraction_val):
+                self._compare_idx = cand      # a different slide -> new baseline
             else:
-                base = self._baseline_frame_for(self._compare_idx)
-                cand = load_frame(self._paths[cand_idx])
-                if masked_frames_differ(base, cand, self._mask, fraction_threshold=self._fraction_val):
-                    self._filmstrip.rebaseline()  # new baseline + comparison reference
-                    self._compare_idx = cand_idx
-                    self._show_baseline_big()
-                    self._next_phase = "compare"
-                else:
-                    self._filmstrip.mark_discard()  # red frame, eject after the delay
-                    self._next_phase = "eject"
-        else:  # eject the duplicate
-            idx = self._filmstrip.eject()
-            self._removals.append(self._paths[idx])
-            self._next_phase = "compare"
+                self._marked.add(self._paths[cand].name)  # duplicate -> red (kept in view)
+        self._push_marks()
+        self._filmstrip.set_scan(self._compare_idx, cand)
+        self._ref_index = cand
+        self._refresh_ref()                    # show the slide being examined
+        self._cand += 1
         self._schedule()
 
-    # ----- pause + manual override -----
+    def _push_marks(self) -> None:
+        """Convert the marked NAMES to current indices for the film strip (names
+        survive reloads that shift indices)."""
+        self._filmstrip.set_marked(
+            {i for i, p in enumerate(self._paths) if p.name in self._marked})
+
+    def _end_run(self) -> None:
+        """Marking finished — keep the red marks for review; enable 'Ausführen'."""
+        self._running = False
+        self._paused = False
+        self._step_timer.stop()
+        self._filmstrip.clear_scan()
+        self._filmstrip.set_browse_mode(True)
+        self._push_marks()
+        self._set_run_ui(False)
+        self._refresh_exec_btn()
+        n = len(self._marked)
+        self._status.setText(tr("sort.marked", n=n) if n else tr("sort.none_found"))
+
     def _toggle_pause(self) -> None:
         if not self._running:
             return
         if self._paused:
             self._paused = False
             self._pause_btn.setText(tr("sort.pause"))
-            self._set_override_visible(False)
             self._schedule()
         else:
             self._paused = True
             self._step_timer.stop()
             self._pause_btn.setText(tr("common.next"))
-            self._set_override_visible(True)
 
-    def _override_keep(self) -> None:
-        if not (self._running and self._paused and self._filmstrip.has_candidate()):
+    # ----- duplicate marks (review) -----
+    def _toggle_mark(self, index: int) -> None:
+        if not (0 <= index < len(self._paths)):
             return
-        cand_idx = self._filmstrip.candidate_index()
-        self._filmstrip.rebaseline()
-        if not is_annotated(self._paths[cand_idx].name):
-            self._compare_idx = cand_idx  # a kept real slide becomes the new reference
-        self._show_baseline_big()
-        self._next_phase = "compare"
-        if not self._filmstrip.has_candidate():
-            self._finish()
+        name = self._paths[index].name
+        self._marked.discard(name) if name in self._marked else self._marked.add(name)
+        self._push_marks()
+        self._refresh_exec_btn()
 
-    def _override_discard(self) -> None:
-        if not (self._running and self._paused and self._filmstrip.has_candidate()):
+    def _toggle_mark_selected(self) -> None:
+        for i in self._selection:
+            if 0 <= i < len(self._paths):
+                name = self._paths[i].name
+                self._marked.discard(name) if name in self._marked else self._marked.add(name)
+        self._push_marks()
+        self._refresh_exec_btn()
+
+    def _refresh_exec_btn(self) -> None:
+        n = len(self._marked)
+        self._exec_btn.setText(tr("sort.execute", n=n))
+        self._exec_btn.setEnabled(not self._running and n > 0)
+
+    def _execute_marked(self) -> None:
+        """Apply the current action (move/delete) to all red-marked duplicates."""
+        if self._running:
             return
-        idx = self._filmstrip.eject()
-        self._removals.append(self._paths[idx])
-        self._next_phase = "compare"
-        if not self._filmstrip.has_candidate():
-            self._finish()
-
-    def _set_override_visible(self, visible: bool) -> None:
-        self._keep_btn.setVisible(visible)
-        self._discard_btn.setVisible(visible)
-
-    def _set_run_ui(self, running: bool) -> None:
-        # The Start button stays enabled: during a run it turns into ABBRECHEN.
-        self._run_btn.setText(tr("sort.cancel_run") if running else tr("common.start"))
-        self._action_btn.setEnabled(not running)
-        self._folder_btn.setEnabled(not running)
-        self._pause_btn.setVisible(running)
-        if running:
-            self._pause_btn.setText(tr("sort.pause"))
-        else:
-            self._set_override_visible(False)
-
-    def _finish(self) -> None:
-        self._running = False
-        self._paused = False
-        self._step_timer.stop()
-        self._set_run_ui(False)
-        self._clear_range()
-        self._clear_selection()
-        # The last kept slide of the processed range = the final baseline (current
-        # reference). Remember it by name so we can re-centre it after any removals
-        # shift the indices.
-        kept_name = (self._paths[self._ref_index].name
-                     if 0 <= self._ref_index < len(self._paths) else None)
-        removals = self._removals
-        if removals and self._action == "move":
+        names = [p.name for p in self._paths if p.name in self._marked]
+        if not names:
+            return
+        if self._action == "delete":
+            if not ask_yes_no(self, tr("multi.delete_title"), tr("multi.delete_body", n=len(names))):
+                return
+        kept = self._paths[self._ref_index].name if 0 <= self._ref_index < len(self._paths) else None
+        if self._action == "move":
             dest = self._folder / "_aussortiert"
             dest.mkdir(exist_ok=True)
-            for p in removals:
+            for name in names:
                 try:
-                    shutil.move(str(p), str(dest / p.name))
+                    shutil.move(str(self._folder / name), str(dest / name))
                 except OSError:
                     pass
-        elif removals:
-            for p in removals:
+        else:
+            for name in names:
                 try:
-                    p.unlink()
+                    (self._folder / name).unlink()
                 except OSError:
                     pass
-
-        # Back to the whole folder in the strip, centred (and shown big) on the
-        # last kept slide of the range.
+        self._marked = set()
+        self._clear_selection()
         self._paths = slide_frames(self._folder)
-        idx = next((i for i, p in enumerate(self._paths) if p.name == kept_name), None)
+        idx = next((i for i, p in enumerate(self._paths) if p.name == kept), None)
         self._ref_index = idx if idx is not None else min(self._ref_index, max(0, len(self._paths) - 1))
         self._refresh_ref()
         self._filmstrip.set_session(self._paths)
         self._filmstrip.set_browse_mode(True)
         self._filmstrip.center_on(self._ref_index)
-        if removals:
-            done = tr("sort.moved" if self._action == "move" else "sort.deleted", n=len(removals))
-            self._status.setText(tr("sort.remaining", done=done, n=len(self._paths)))
-        else:
-            self._status.setText(tr("sort.none_found"))
+        self._refresh_exec_btn()
+        done = tr("sort.moved" if self._action == "move" else "sort.deleted", n=len(names))
+        self._status.setText(tr("sort.remaining", done=done, n=len(self._paths)))
+
+    def _set_run_ui(self, running: bool) -> None:
+        # The Start button stays enabled: during the marking run it becomes ABBRECHEN.
+        self._run_btn.setText(tr("sort.cancel_run") if running else tr("common.start"))
+        self._action_btn.setEnabled(not running)
+        self._folder_btn.setEnabled(not running)
+        self._exec_btn.setEnabled(not running and bool(self._marked))
+        self._pause_btn.setVisible(running)
+        if running:
+            self._pause_btn.setText(tr("sort.pause"))
 
 
 def open_sorter(folder: Path | None = None) -> SortOutWindow:

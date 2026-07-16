@@ -44,6 +44,9 @@ def test_annotated_kept_and_following_duplicate_removed(tmp_path, monkeypatch):
         s._do_phase()
         guard += 1
 
+    # only the following duplicate is marked; the annotated frame is never marked
+    assert s._marked == {"00030.png"}
+    s._execute_marked()
     remaining = sorted(p.name for p in fol.glob("*.png"))
     assert remaining == ["00010.png", "00020.png", "00020_edit_01.png"]
     assert (fol / "_aussortiert" / "00030.png").exists()
@@ -65,5 +68,7 @@ def test_annotated_frame_never_in_removals_even_if_duplicate(tmp_path, monkeypat
     while s._running and guard < 100:
         s._do_phase()
         guard += 1
+    assert s._marked == set()  # annotated twin is never marked as a duplicate
+    s._execute_marked()
     assert (fol / "00005_markiert_01.png").exists()  # annotated kept despite being identical
     assert not (fol / "_aussortiert").exists()
