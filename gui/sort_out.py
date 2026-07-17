@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from core.discard import count_from_second, discard_from_second
 from core.filmstrip import build_filmstrip
 from core.i18n import tr
 from core.naming import is_annotated
@@ -62,7 +63,7 @@ from core.settings import (
 from gui.branding import APP_NAME, app_icon
 from gui.dialogs import ask_yes_no
 from gui.selection import next_selection
-from gui.slide_ops import adjust_slide_time, delete_slide, move_slide, slide_second
+from gui.slide_ops import adjust_slide_time, delete_slide, fmt_seconds, move_slide, slide_second
 from core.slide_dedupe import (
     COMPARE,
     ELLIPSE,
@@ -631,6 +632,10 @@ class SortOutWindow(QWidget):
         act_to = menu.addAction(tr("range.to_here"))
         act_clear = menu.addAction(tr("range.clear"))
         act_clear.setEnabled(self._range_start is not None or self._range_end is not None)
+        menu.addSeparator()
+        t = slide_second(self._paths[index].name)
+        act_discard = menu.addAction(tr("discard.from_here", time=fmt_seconds(t or 0)))
+        act_discard.setEnabled(t is not None)
         chosen = menu.exec(QCursor.pos())
         if chosen == act_mark:
             self._toggle_mark(index)
@@ -648,6 +653,40 @@ class SortOutWindow(QWidget):
             self._apply_range_highlight()
         elif chosen == act_clear:
             self._clear_range()
+        elif chosen == act_discard:
+            self._discard_from(index)
+
+    def _discard_from(self, index: int) -> None:
+        """Discard the tail: trim the system track to this slide's second and delete
+        all slides and mic segments at or after it (irreversible; confirmed)."""
+        if self._running or not (0 <= index < len(self._paths)):
+            return
+        t = slide_second(self._paths[index].name)
+        if t is None:
+            return
+        session = webinar_dir(self._folder)
+        n_slides, n_mics = count_from_second(self._folder, session / "mikro", t)
+        if not ask_yes_no(self, tr("discard.confirm_title"),
+                          tr("discard.confirm_body", time=fmt_seconds(t), slides=n_slides, mics=n_mics)):
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            discard_from_second(session, self._folder, t)
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._paths = slide_frames(self._folder)
+        self._ref_index = min(self._ref_index, max(0, len(self._paths) - 1))
+        self._refresh_ref()
+        self._filmstrip.set_session(self._paths)
+        self._filmstrip.set_browse_mode(True)
+        self._filmstrip.center_on(self._ref_index)
+        self._clear_range()
+        self._clear_selection()
+        self._marked = set()
+        self._filmstrip.set_marked(set())
+        self._refresh_exec_btn()
+        self._sync_scroll()
+        self._status.setText(tr("discard.done", time=fmt_seconds(t), slides=n_slides, mics=n_mics))
 
     def _bulk_menu(self) -> None:
         n = len(self._selection)

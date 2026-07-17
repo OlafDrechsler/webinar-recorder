@@ -409,6 +409,46 @@ TRANSLATIONS: dict[str, dict] = {
                             "De {n} geselecteerde dia's echt definitief verwijderen?",
                             "Na pewno trwale usunąć {n} zaznaczonych slajdów?",
                             "Seçili {n} slayt kalıcı olarak silinsin mi?"),
+    "discard.from_here": _t("Aufnahme ab hier verwerfen ({time})", "Discard recording from here ({time})",
+                            "Supprimer l'enregistrement à partir d'ici ({time})",
+                            "Descartar la grabación desde aquí ({time})",
+                            "Scarta la registrazione da qui ({time})",
+                            "Descartar a gravação a partir daqui ({time})",
+                            "Opname vanaf hier verwerpen ({time})", "Odrzuć nagranie od tego miejsca ({time})",
+                            "Kaydı buradan itibaren sil ({time})"),
+    "discard.confirm_title": _t("Aufnahme ab hier verwerfen?", "Discard recording from here?",
+                                "Supprimer l'enregistrement à partir d'ici ?", "¿Descartar la grabación desde aquí?",
+                                "Scartare la registrazione da qui?", "Descartar a gravação a partir daqui?",
+                                "Opname vanaf hier verwerpen?", "Odrzucić nagranie od tego miejsca?",
+                                "Kayıt buradan itibaren silinsin mi?"),
+    "discard.confirm_body": _t(
+        "Ab {time} werden {slides} Folien, {mics} Mikro-Segmente und der Rest der Tonspur endgültig entfernt. "
+        "Das kann nicht rückgängig gemacht werden. Fortfahren?",
+        "From {time} on, {slides} slides, {mics} mic segments and the rest of the audio track will be "
+        "permanently removed. This cannot be undone. Continue?",
+        "À partir de {time}, {slides} diapositives, {mics} segments micro et le reste de la piste audio seront "
+        "supprimés définitivement. Action irréversible. Continuer ?",
+        "A partir de {time} se eliminarán definitivamente {slides} diapositivas, {mics} segmentos de micrófono "
+        "y el resto de la pista de audio. No se puede deshacer. ¿Continuar?",
+        "Da {time} verranno rimossi definitivamente {slides} diapositive, {mics} segmenti microfono e il resto "
+        "della traccia audio. Operazione irreversibile. Continuare?",
+        "A partir de {time}, {slides} slides, {mics} segmentos de microfone e o resto da faixa de áudio serão "
+        "removidos definitivamente. Não pode ser desfeito. Continuar?",
+        "Vanaf {time} worden {slides} dia's, {mics} microfoonsegmenten en de rest van het audiospoor definitief "
+        "verwijderd. Dit kan niet ongedaan worden gemaakt. Doorgaan?",
+        "Od {time} zostanie trwale usuniętych {slides} slajdów, {mics} segmentów mikrofonu i reszta ścieżki "
+        "audio. Nie można cofnąć. Kontynuować?",
+        "{time} itibarıyla {slides} slayt, {mics} mikrofon segmenti ve ses parçasının geri kalanı kalıcı olarak "
+        "silinecek. Geri alınamaz. Devam edilsin mi?"),
+    "discard.done": _t("Ab {time} verworfen: {slides} Folien, {mics} Mikro-Segmente.",
+                       "Discarded from {time}: {slides} slides, {mics} mic segments.",
+                       "Supprimé à partir de {time} : {slides} diapositives, {mics} segments micro.",
+                       "Descartado desde {time}: {slides} diapositivas, {mics} segmentos de micrófono.",
+                       "Scartato da {time}: {slides} diapositive, {mics} segmenti microfono.",
+                       "Descartado a partir de {time}: {slides} slides, {mics} segmentos de microfone.",
+                       "Vanaf {time} verworpen: {slides} dia's, {mics} microfoonsegmenten.",
+                       "Odrzucono od {time}: {slides} slajdów, {mics} segmentów mikrofonu.",
+                       "{time} itibarıyla silindi: {slides} slayt, {mics} mikrofon segmenti."),
     "range.from_here": _t("Aktion ab hier", "Action from here", "Action à partir d'ici",
                           "Acción desde aquí", "Azione da qui", "Ação a partir daqui",
                           "Actie vanaf hier", "Akcja od tego miejsca", "Buradan itibaren uygula"),
