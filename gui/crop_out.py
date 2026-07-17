@@ -57,12 +57,18 @@ class CropCanvas(QWidget):
     box_changed = Signal()
     context_requested = Signal()  # right-click -> range menu
 
+    HANDLE = 8  # grab tolerance (widget px) for edges/corners
+
     def __init__(self) -> None:
         super().__init__()
         self._pix: QPixmap | None = None
         self._box: list[float] | None = None  # [l, t, r, b] in image pixels
-        self._drag_from: tuple[float, float] | None = None
+        self._mode: str | None = None         # 'new' | 'resize' | 'move' while dragging
+        self._grab = (False, False, False, False)  # which edges (l, r, t, b) are dragged
+        self._move_from: tuple[float, float] | None = None
+        self._box0: list[float] | None = None
         self.setMinimumSize(480, 320)
+        self.setMouseTracking(True)  # so the cursor reflects the handle under it
 
     def set_image(self, pix: QPixmap) -> None:
         """Swap the shown image but keep the drawn rectangle (browse across slides)."""
@@ -103,6 +109,37 @@ class CropCanvas(QWidget):
         return QRect(int(ox + l * scale), int(oy + t * scale),
                      int((r - l) * scale), int((b - t) * scale))
 
+    def _handle_at(self, wx: float, wy: float):
+        """Which part of the box the widget point is on: ('edge', l, r, t, b),
+        ('move',) or None."""
+        if self._box is None:
+            return None
+        r = self._img_to_widget(*self._box)
+        h = self.HANDLE
+        within_x = r.left() - h <= wx <= r.right() + h
+        within_y = r.top() - h <= wy <= r.bottom() + h
+        near_l = abs(wx - r.left()) <= h and within_y
+        near_r = abs(wx - r.right()) <= h and within_y
+        near_t = abs(wy - r.top()) <= h and within_x
+        near_b = abs(wy - r.bottom()) <= h and within_x
+        if near_l or near_r or near_t or near_b:
+            return ("edge", near_l, near_r, near_t, near_b)
+        if r.contains(int(wx), int(wy)):
+            return ("move",)
+        return None
+
+    def _cursor_for(self, handle):
+        if handle is None:
+            return Qt.ArrowCursor
+        if handle[0] == "move":
+            return Qt.SizeAllCursor
+        _, l, rr, t, b = handle
+        if (l and t) or (rr and b):
+            return Qt.SizeFDiagCursor
+        if (rr and t) or (l and b):
+            return Qt.SizeBDiagCursor
+        return Qt.SizeHorCursor if (l or rr) else Qt.SizeVerCursor
+
     # ----- mouse -----
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.RightButton:
@@ -110,21 +147,59 @@ class CropCanvas(QWidget):
             return
         if self._pix is None:
             return
-        self._drag_from = self._to_image(event.position().x(), event.position().y())
+        x, y = event.position().x(), event.position().y()
+        handle = self._handle_at(x, y)
+        if handle is not None and handle[0] == "edge":
+            self._mode = "resize"
+            self._grab = handle[1:]
+        elif handle is not None and handle[0] == "move":
+            self._mode = "move"
+            self._move_from = self._to_image(x, y)
+            self._box0 = list(self._box)
+        else:
+            self._mode = "new"
+            fx, fy = self._to_image(x, y)
+            self._box = [fx, fy, fx, fy]
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
-        if self._pix is None or self._drag_from is None:
+        if self._pix is None:
             return
-        x1, y1 = self._drag_from
-        x2, y2 = self._to_image(event.position().x(), event.position().y())
-        self._box = [min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)]
+        x, y = event.position().x(), event.position().y()
+        if self._mode is None:  # just hovering -> reflect the handle in the cursor
+            self.setCursor(self._cursor_for(self._handle_at(x, y)))
+            return
+        ix, iy = self._to_image(x, y)
+        if self._mode == "resize":
+            l, rr, t, b = self._grab
+            box = self._box
+            if l:
+                box[0] = min(ix, box[2] - 1)
+            if rr:
+                box[2] = max(ix, box[0] + 1)
+            if t:
+                box[1] = min(iy, box[3] - 1)
+            if b:
+                box[3] = max(iy, box[1] + 1)
+        elif self._mode == "move":
+            l, t, r, b = self._box0
+            dx = ix - self._move_from[0]
+            dy = iy - self._move_from[1]
+            bw, bh = r - l, b - t
+            nl = max(0, min(self._pix.width() - bw, l + dx))
+            nt = max(0, min(self._pix.height() - bh, t + dy))
+            self._box = [nl, nt, nl + bw, nt + bh]
+        else:  # new
+            fx, fy = self._box[0], self._box[1]
+            self._box = [min(fx, ix), min(fy, iy), max(fx, ix), max(fy, iy)]
         self.update()
         self.box_changed.emit()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
-        self._drag_from = None
-        # A click without a real drag means "no crop".
-        if self._box is not None and (self._box[2] - self._box[0] < 2 or self._box[3] - self._box[1] < 2):
+        was_new = self._mode == "new"
+        self._mode = None
+        # A click without a real drag (when drawing a new box) means "no crop".
+        if was_new and self._box is not None and (
+                self._box[2] - self._box[0] < 2 or self._box[3] - self._box[1] < 2):
             self._box = None
             self.update()
             self.box_changed.emit()
@@ -149,6 +224,16 @@ class CropCanvas(QWidget):
         p.setPen(QPen(QColor(45, 166, 255), 2))
         p.setBrush(Qt.NoBrush)
         p.drawRect(keep)
+        # Grab handles on the 4 corners + 4 edge midpoints.
+        p.setBrush(QColor(45, 166, 255))
+        p.setPen(QPen(QColor(255, 255, 255), 1))
+        cx = (keep.left() + keep.right()) // 2
+        cy = (keep.top() + keep.bottom()) // 2
+        for hx, hy in ((keep.left(), keep.top()), (keep.right(), keep.top()),
+                       (keep.left(), keep.bottom()), (keep.right(), keep.bottom()),
+                       (cx, keep.top()), (cx, keep.bottom()),
+                       (keep.left(), cy), (keep.right(), cy)):
+            p.drawRect(QRect(hx - 4, hy - 4, 8, 8))
 
 
 class CropWindow(QWidget):
