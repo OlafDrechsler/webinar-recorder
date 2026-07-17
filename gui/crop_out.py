@@ -281,6 +281,9 @@ class CropWindow(QWidget):
         self._filmstrip.set_browse_mode(True)
         self._filmstrip.frame_clicked.connect(self._on_strip_click)
         self._filmstrip.frame_context.connect(self._slide_menu_at)
+        strip_first = QPushButton("«")   # jump to the first slide
+        strip_first.setFixedWidth(28)
+        strip_first.clicked.connect(lambda: self._filmstrip.center_on(0))
         strip_left = QPushButton("‹")
         strip_left.setFixedWidth(28)
         strip_left.setAutoRepeat(True)
@@ -291,11 +294,16 @@ class CropWindow(QWidget):
         strip_right.setAutoRepeat(True)
         strip_right.setAutoRepeatInterval(60)
         strip_right.clicked.connect(lambda: self._filmstrip.scroll(1))
+        strip_last = QPushButton("»")     # jump to the last slide
+        strip_last.setFixedWidth(28)
+        strip_last.clicked.connect(lambda: self._filmstrip.center_on(self._filmstrip.count() - 1))
         strip_row = QHBoxLayout()
         strip_row.setSpacing(4)
+        strip_row.addWidget(strip_first)
         strip_row.addWidget(strip_left)
         strip_row.addWidget(self._filmstrip, stretch=1)
         strip_row.addWidget(strip_right)
+        strip_row.addWidget(strip_last)
 
         # Scroll bar to jump anywhere in the strip (for very long recordings).
         self._strip_scroll = QScrollBar(Qt.Horizontal)
