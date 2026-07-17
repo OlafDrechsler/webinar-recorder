@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollBar,
     QSizePolicy,
     QSlider,
     QVBoxLayout,
@@ -122,6 +123,7 @@ class SortFilmstrip(QWidget):
 
     frame_clicked = Signal(int, object)  # left click: (index, keyboard modifiers)
     frame_context = Signal(int)          # right click: index into the frames list
+    centered = Signal(int)               # the centred frame index changed (view moved)
 
     def __init__(self) -> None:
         super().__init__()
@@ -180,13 +182,16 @@ class SortFilmstrip(QWidget):
 
     def scroll(self, delta: int) -> None:
         if self._frames:
-            self._center = max(0, min(len(self._frames) - 1, self._effective_center() + delta))
-            self.update()
+            self.center_on(self._effective_center() + delta)
 
     def center_on(self, frame_index: int) -> None:
-        if 0 <= frame_index < len(self._frames):
+        if not self._frames:
+            return
+        frame_index = max(0, min(len(self._frames) - 1, frame_index))
+        if frame_index != self._center:
             self._center = frame_index
-            self.update()
+            self.centered.emit(frame_index)
+        self.update()
 
     # ----- click -----
     def mousePressEvent(self, event) -> None:  # noqa: N802
@@ -471,6 +476,11 @@ class SortOutWindow(QWidget):
         strip_row.addWidget(self._filmstrip, stretch=1)
         strip_row.addWidget(strip_right)
 
+        # Scroll bar to jump anywhere in the strip (for very long recordings).
+        self._strip_scroll = QScrollBar(Qt.Horizontal)
+        self._strip_scroll.valueChanged.connect(self._filmstrip.center_on)
+        self._filmstrip.centered.connect(self._on_strip_centered)
+
         self._speed = QSlider(Qt.Horizontal)
         self._speed.setRange(0, 100)   # 0 = slow (2 s/step), 100 = fast (no delay)
         self._speed.setValue(0)
@@ -527,6 +537,7 @@ class SortOutWindow(QWidget):
         layout.addLayout(tools)
         layout.addLayout(thr_row)
         layout.addLayout(strip_row)
+        layout.addWidget(self._strip_scroll)
         layout.addLayout(run_row)
         layout.addLayout(action_row)
         layout.addWidget(self._status)
@@ -567,6 +578,7 @@ class SortOutWindow(QWidget):
         self._marked = set()
         self._filmstrip.set_marked(set())
         self._refresh_exec_btn()
+        self._sync_scroll()
         self._status.setText(tr("sort.no_slides") if not self._paths else "")
 
     # ----- reference image + multi-select -----
@@ -700,6 +712,7 @@ class SortOutWindow(QWidget):
         self._filmstrip.center_on(self._ref_index)
         self._push_marks()  # marks are by name -> survive the reload
         self._refresh_exec_btn()
+        self._sync_scroll()
 
     def _remove_slide_at(self, index: int, move: bool) -> None:
         name = self._paths[index].name
@@ -719,6 +732,17 @@ class SortOutWindow(QWidget):
         new_name = adjust_slide_time(self, self._folder, name, occupied, icon=app_icon())
         if new_name:
             self._reload_showing(new_name)
+
+    def _on_strip_centered(self, value: int) -> None:
+        self._strip_scroll.blockSignals(True)
+        self._strip_scroll.setValue(value)
+        self._strip_scroll.blockSignals(False)
+
+    def _sync_scroll(self) -> None:
+        self._strip_scroll.blockSignals(True)
+        self._strip_scroll.setRange(0, max(0, len(self._paths) - 1))
+        self._strip_scroll.setValue(min(self._ref_index, max(0, len(self._paths) - 1)))
+        self._strip_scroll.blockSignals(False)
 
     def _step_ref(self, delta: int) -> None:
         if not self._paths:
@@ -1010,6 +1034,7 @@ class SortOutWindow(QWidget):
         self._filmstrip.set_browse_mode(True)
         self._filmstrip.center_on(self._ref_index)
         self._refresh_exec_btn()
+        self._sync_scroll()
         done = tr("sort.moved" if self._action == "move" else "sort.deleted", n=len(names))
         self._status.setText(tr("sort.remaining", done=done, n=len(self._paths)))
 

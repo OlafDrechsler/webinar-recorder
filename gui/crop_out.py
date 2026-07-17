@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QProgressDialog,
     QPushButton,
+    QScrollBar,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -210,6 +211,11 @@ class CropWindow(QWidget):
         strip_row.addWidget(self._filmstrip, stretch=1)
         strip_row.addWidget(strip_right)
 
+        # Scroll bar to jump anywhere in the strip (for very long recordings).
+        self._strip_scroll = QScrollBar(Qt.Horizontal)
+        self._strip_scroll.valueChanged.connect(self._filmstrip.center_on)
+        self._filmstrip.centered.connect(self._on_strip_centered)
+
         # Bottom row: hint/size (left) — mode toggle — Start (right).
         self._hint = QLabel()
         self._hint.setStyleSheet("color:#aaa;")
@@ -230,6 +236,7 @@ class CropWindow(QWidget):
         layout.addLayout(ref_row)
         layout.addWidget(self._canvas, stretch=1)
         layout.addLayout(strip_row)
+        layout.addWidget(self._strip_scroll)
         layout.addLayout(bottom_row)
         layout.addWidget(self._status)
         self.resize(960, 820)
@@ -263,6 +270,7 @@ class CropWindow(QWidget):
         self._filmstrip.center_on(self._ref_index)
         self._clear_range()
         self._clear_selection()
+        self._sync_scroll()
         self._status.setText(tr("sort.no_slides") if not self._paths else "")
 
     # ----- context menu (single / bulk / range) -----
@@ -316,6 +324,7 @@ class CropWindow(QWidget):
         self._filmstrip.center_on(self._ref_index)
         self._clear_range()
         self._clear_selection()
+        self._sync_scroll()
 
     def _remove_slide_at(self, index: int, move: bool) -> None:
         name = self._paths[index].name
@@ -403,6 +412,17 @@ class CropWindow(QWidget):
             self._update_selection(frame_index, modifiers)
             self._filmstrip.center_on(self._ref_index)
 
+    def _on_strip_centered(self, value: int) -> None:
+        self._strip_scroll.blockSignals(True)
+        self._strip_scroll.setValue(value)
+        self._strip_scroll.blockSignals(False)
+
+    def _sync_scroll(self) -> None:
+        self._strip_scroll.blockSignals(True)
+        self._strip_scroll.setRange(0, max(0, len(self._paths) - 1))
+        self._strip_scroll.setValue(min(self._ref_index, max(0, len(self._paths) - 1)))
+        self._strip_scroll.blockSignals(False)
+
     def _step_ref(self, delta: int) -> None:
         if not self._paths:
             return
@@ -482,6 +502,7 @@ class CropWindow(QWidget):
         self._filmstrip.center_on(self._ref_index)
         self._clear_range()
         self._clear_selection()
+        self._sync_scroll()
         self._status.setText(tr("crop.done", n=n))
 
 
