@@ -786,6 +786,21 @@ class Player(QWidget):
         self.show_slide(frame.name)
         self._seek(frame.second * 1000)
 
+    def keyPressEvent(self, event) -> None:
+        """Keyboard: ←/→ step one slide, Entf = Aussortieren, Shift+Entf = löschen."""
+        key = event.key()
+        if key in (Qt.Key_Left, Qt.Key_Right):
+            self._step_slide(-1 if key == Qt.Key_Left else 1)
+            return
+        if key == Qt.Key_Delete:
+            move = not (event.modifiers() & Qt.ShiftModifier)  # Entf=verschieben, Shift+Entf=löschen
+            if self._selection:
+                self._remove_selected(move=move)
+            elif self._current_slide:
+                self._remove_slide(self._current_slide, move=move)
+            return
+        super().keyPressEvent(event)
+
     def _on_frame_clicked(self, item: dict, modifiers=None) -> None:
         if item["kind"] == "mic":
             # Same as picking the segment from the bottom-right dropdown: jump there

@@ -563,6 +563,21 @@ class CropWindow(QWidget):
         self._refresh_ref()
         self._filmstrip.center_on(self._ref_index)
 
+    def keyPressEvent(self, event) -> None:
+        """Keyboard: ←/→ step one slide, Entf = Aussortieren, Shift+Entf = löschen."""
+        key = event.key()
+        if key in (Qt.Key_Left, Qt.Key_Right):
+            self._step_ref(-1 if key == Qt.Key_Left else 1)
+            return
+        if key == Qt.Key_Delete:
+            move = not (event.modifiers() & Qt.ShiftModifier)  # Entf=verschieben, Shift+Entf=löschen
+            if self._selection:
+                self._remove_selected(move=move)
+            elif self._paths:
+                self._remove_slide_at(self._ref_index, move=move)
+            return
+        super().keyPressEvent(event)
+
     def _refresh_ref(self) -> None:
         if not self._paths:
             self._ref_label.setText("—")
