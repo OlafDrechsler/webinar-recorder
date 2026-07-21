@@ -668,24 +668,24 @@ TRANSLATIONS: dict[str, dict] = {
                                "¿Recortar la grabación?", "Accorciare la registrazione?", "Encurtar a gravação?",
                                "Opname inkorten?", "Przyciąć nagranie?", "Kayıt kısaltılsın mı?"),
     "player.discard_body": _t(
-        "System-Spur ab {time} verwerfen? Sie wird gekürzt und {n} Mikro-Segmente ab dieser Zeit werden "
-        "endgültig gelöscht. Das kann nicht rückgängig gemacht werden.",
-        "Discard the system track from {time} on? It will be trimmed and {n} mic segments from that time on "
-        "will be permanently deleted. This cannot be undone.",
-        "Supprimer la piste système à partir de {time} ? Elle sera raccourcie et {n} segments micro à partir "
-        "de cet instant seront définitivement supprimés. Action irréversible.",
-        "¿Descartar la pista del sistema a partir de {time}? Se recortará y se eliminarán definitivamente {n} "
-        "segmentos de micrófono a partir de ese momento. Esta acción no se puede deshacer.",
-        "Scartare la traccia di sistema da {time} in poi? Verrà accorciata e {n} segmenti microfono da quel "
-        "momento saranno eliminati definitivamente. Operazione irreversibile.",
-        "Descartar a faixa do sistema a partir de {time}? Ela será encurtada e {n} segmentos de microfone a "
-        "partir desse momento serão eliminados definitivamente. Não pode ser desfeito.",
-        "Systeemspoor vanaf {time} verwerpen? Het wordt ingekort en {n} microfoonsegmenten vanaf dat moment "
-        "worden definitief verwijderd. Dit kan niet ongedaan worden gemaakt.",
-        "Odrzucić ścieżkę systemową od {time}? Zostanie przycięta, a {n} segmentów mikrofonu od tego czasu "
-        "zostanie trwale usuniętych. Tej operacji nie można cofnąć.",
-        "Sistem kaydı {time} itibarıyla silinsin mi? Kırpılacak ve o andan itibaren {n} mikrofon segmenti "
-        "kalıcı olarak silinecek. Bu geri alınamaz."),
+        "System-Spur ab {time} verwerfen? Sie wird gekürzt und {s} Folien sowie {n} Mikro-Segmente ab dieser "
+        "Zeit werden endgültig gelöscht. Das kann nicht rückgängig gemacht werden.",
+        "Discard the system track from {time} on? It will be trimmed and {s} slides plus {n} mic segments from "
+        "that time on will be permanently deleted. This cannot be undone.",
+        "Supprimer la piste système à partir de {time} ? Elle sera raccourcie et {s} diapositives ainsi que {n} "
+        "segments micro à partir de cet instant seront définitivement supprimés. Action irréversible.",
+        "¿Descartar la pista del sistema a partir de {time}? Se recortará y se eliminarán definitivamente {s} "
+        "diapositivas y {n} segmentos de micrófono a partir de ese momento. Esta acción no se puede deshacer.",
+        "Scartare la traccia di sistema da {time} in poi? Verrà accorciata e {s} diapositive e {n} segmenti "
+        "microfono da quel momento saranno eliminati definitivamente. Operazione irreversibile.",
+        "Descartar a faixa do sistema a partir de {time}? Ela será encurtada e {s} diapositivos e {n} segmentos "
+        "de microfone a partir desse momento serão eliminados definitivamente. Não pode ser desfeito.",
+        "Systeemspoor vanaf {time} verwerpen? Het wordt ingekort en {s} dia's plus {n} microfoonsegmenten vanaf "
+        "dat moment worden definitief verwijderd. Dit kan niet ongedaan worden gemaakt.",
+        "Odrzucić ścieżkę systemową od {time}? Zostanie przycięta, a {s} slajdów i {n} segmentów mikrofonu od "
+        "tego czasu zostanie trwale usuniętych. Tej operacji nie można cofnąć.",
+        "Sistem kaydı {time} itibarıyla silinsin mi? Kırpılacak ve o andan itibaren {s} slayt ve {n} mikrofon "
+        "segmenti kalıcı olarak silinecek. Bu geri alınamaz."),
     "player.delete_seg_title": _t("Mikro-Segment löschen?", "Delete mic segment?", "Supprimer le segment micro ?",
                                   "¿Eliminar segmento de micrófono?", "Eliminare segmento microfono?",
                                   "Apagar segmento de microfone?", "Microfoonsegment verwijderen?",

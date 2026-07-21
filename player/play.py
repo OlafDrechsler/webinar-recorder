@@ -104,8 +104,8 @@ def _wait_file_writable(path: Path, tries: int = 80) -> bool:
 
 
 class _DiscardWorker(QObject):
-    """Trims the system track and deletes the trailing mic files off the GUI
-    thread, so the window stays responsive during the FFmpeg call."""
+    """Trims the system track and deletes the trailing slide + mic files off the
+    GUI thread, so the window stays responsive during the FFmpeg call."""
 
     finished = Signal()
 
@@ -941,8 +941,8 @@ class Player(QWidget):
 
     def _discard_from_here(self, t_ms: int) -> None:
         """Trim the system track to ``t_ms`` (the playhead time shown in the menu)
-        and permanently delete all mic segments that start at or after it
-        (irreversible; confirmed first)."""
+        and permanently delete every slide and mic segment after it (irreversible;
+        confirmed first). Slides shown up to and including the playhead are kept."""
         if self._slides_dir is None:
             return
         session = self._slides_dir.parent
@@ -950,9 +950,12 @@ class Player(QWidget):
         if sys_track is None or t_ms <= 0:
             return
         doomed = [s for s in self._segments if s.start_ms >= t_ms]
+        # Slides that only appear after the playhead go too (the one currently
+        # shown started at/before it and stays).
+        doomed_slides = [f for f in self._frames if f.second * 1000 > t_ms]
         if not ask_yes_no(
             self, tr("player.discard_title"),
-            tr("player.discard_body", time=_fmt(t_ms), n=len(doomed)),
+            tr("player.discard_body", time=_fmt(t_ms), s=len(doomed_slides), n=len(doomed)),
         ):
             return
         # Release every open handle before touching files (Windows locks them);
@@ -964,7 +967,7 @@ class Player(QWidget):
         self._system.setSource(QUrl())
         for s in self._segments:
             s.dispose()
-        doomed_paths = [s.path for s in doomed]
+        doomed_paths = [s.path for s in doomed] + [self._slides_dir / f.name for f in doomed_slides]
         self._segments = []
         self._run_with_progress(
             tr("player.trimming"),
