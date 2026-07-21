@@ -15,13 +15,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtCore import QRect, Qt, Signal
+from PySide6.QtCore import QEvent, QRect, Qt, Signal
 from PySide6.QtGui import QColor, QCursor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QApplication,
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMenu,
     QProgressDialog,
     QPushButton,
@@ -337,6 +339,9 @@ class CropWindow(QWidget):
 
         self._refresh_mode_btn()
         self._update_hint()
+        # Capture ←/→/Entf window-wide so a focused button/scrollbar can't swallow
+        # them (Qt would otherwise use the arrows for focus stepping).
+        QApplication.instance().installEventFilter(self)
         if folder is not None:
             self._load_folder(folder)
 
@@ -563,20 +568,56 @@ class CropWindow(QWidget):
         self._refresh_ref()
         self._filmstrip.center_on(self._ref_index)
 
-    def keyPressEvent(self, event) -> None:
-        """Keyboard: ←/→ step one slide, Entf = Aussortieren, Shift+Entf = löschen."""
-        key = event.key()
-        if key in (Qt.Key_Left, Qt.Key_Right):
-            self._step_ref(-1 if key == Qt.Key_Left else 1)
+    def _key_navigate(self, delta: int, shift: bool) -> None:
+        """←/→ move one slide (clamped). With Shift the move extends the blue
+        multi-selection from the anchor (start & control the marked range)."""
+        if not self._paths:
             return
+        old = self._ref_index
+        new = max(0, min(len(self._paths) - 1, old + delta))
+        self._ref_index = new
+        if shift:
+            if self._anchor is None:
+                self._anchor = old  # anchor where the range starts
+            self._selection, self._anchor = next_selection(
+                list(range(len(self._paths))), self._selection, self._anchor, new, False, True)
+            self._filmstrip.set_selection(self._selection)
+        else:
+            self._selection = set()
+            self._anchor = new
+            self._filmstrip.set_selection(set())
+        self._refresh_ref()
+        self._filmstrip.center_on(new)
+
+    def _handle_key(self, event) -> bool:
+        """Shared ←/→/Entf handling for keyPressEvent and the app event filter.
+        Returns True when the key was consumed."""
+        key = event.key()
+        shift = bool(event.modifiers() & Qt.ShiftModifier)
+        if key in (Qt.Key_Left, Qt.Key_Right):
+            self._key_navigate(-1 if key == Qt.Key_Left else 1, shift)
+            return True
         if key == Qt.Key_Delete:
-            move = not (event.modifiers() & Qt.ShiftModifier)  # Entf=verschieben, Shift+Entf=löschen
+            move = not shift  # Entf = verschieben, Shift+Entf = endgültig löschen
             if self._selection:
                 self._remove_selected(move=move)
             elif self._paths:
                 self._remove_slide_at(self._ref_index, move=move)
-            return
-        super().keyPressEvent(event)
+            return True
+        return False
+
+    def keyPressEvent(self, event) -> None:
+        if not self._handle_key(event):
+            super().keyPressEvent(event)
+
+    def eventFilter(self, obj, event) -> bool:
+        """Intercept ←/→/Entf while this window is active so a focused button or the
+        scrollbar can't consume them — unless a text field has focus."""
+        if event.type() == QEvent.KeyPress and self.isActiveWindow():
+            fw = QApplication.focusWidget()
+            if not isinstance(fw, (QLineEdit, QAbstractSpinBox)) and self._handle_key(event):
+                return True
+        return super().eventFilter(obj, event)
 
     def _refresh_ref(self) -> None:
         if not self._paths:

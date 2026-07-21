@@ -31,16 +31,18 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtCore import QEventLoop, QObject, QSize, QThread, QTimer, QUrl, Qt, Signal
+from PySide6.QtCore import QEvent, QEventLoop, QObject, QSize, QThread, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QPainter, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QApplication,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QLayout,
+    QLineEdit,
     QMenu,
     QProgressDialog,
     QPushButton,
@@ -680,6 +682,10 @@ class Player(QWidget):
         self._system.positionChanged.connect(self._on_position)
         self._system.durationChanged.connect(self._on_duration)
 
+        # Capture ←/→/Entf window-wide so a focused slider (volume, timeline) can't
+        # swallow them (Qt would otherwise use the arrows for value change).
+        QApplication.instance().installEventFilter(self)
+
         if session is not None:
             self.load_session(session)
 
@@ -786,20 +792,57 @@ class Player(QWidget):
         self.show_slide(frame.name)
         self._seek(frame.second * 1000)
 
-    def keyPressEvent(self, event) -> None:
-        """Keyboard: ←/→ step one slide, Entf = Aussortieren, Shift+Entf = löschen."""
-        key = event.key()
-        if key in (Qt.Key_Left, Qt.Key_Right):
-            self._step_slide(-1 if key == Qt.Key_Left else 1)
+    def _key_navigate(self, delta: int, shift: bool) -> None:
+        """←/→ jump one slide (shown big, audio follows). With Shift the move extends
+        the blue multi-selection from the anchor (start & control the marked range)."""
+        if not self._frames:
             return
+        old_idx = self._index_of.get(self._current_slide, 0)
+        new_idx = max(0, min(len(self._frames) - 1, old_idx + delta))
+        frame = self._frames[new_idx]
+        self.show_slide(frame.name)
+        self._seek(frame.second * 1000)
+        if shift:
+            order = [f.name for f in self._frames]
+            if self._anchor is None:
+                self._anchor = self._frames[old_idx].name  # anchor where the range starts
+            self._selection, self._anchor = next_selection(
+                order, self._selection, self._anchor, frame.name, False, True)
+            self._filmstrip.set_selection(self._selection)
+        else:
+            self._selection = set()
+            self._anchor = frame.name
+            self._filmstrip.set_selection(set())
+
+    def _handle_key(self, event) -> bool:
+        """Shared ←/→/Entf handling for keyPressEvent and the app event filter.
+        Returns True when the key was consumed."""
+        key = event.key()
+        shift = bool(event.modifiers() & Qt.ShiftModifier)
+        if key in (Qt.Key_Left, Qt.Key_Right):
+            self._key_navigate(-1 if key == Qt.Key_Left else 1, shift)
+            return True
         if key == Qt.Key_Delete:
-            move = not (event.modifiers() & Qt.ShiftModifier)  # Entf=verschieben, Shift+Entf=löschen
+            move = not shift  # Entf = verschieben, Shift+Entf = endgültig löschen
             if self._selection:
                 self._remove_selected(move=move)
             elif self._current_slide:
                 self._remove_slide(self._current_slide, move=move)
-            return
-        super().keyPressEvent(event)
+            return True
+        return False
+
+    def keyPressEvent(self, event) -> None:
+        if not self._handle_key(event):
+            super().keyPressEvent(event)
+
+    def eventFilter(self, obj, event) -> bool:
+        """Intercept ←/→/Entf while this window is active so a focused slider (volume,
+        timeline) can't consume them — unless a text field has focus."""
+        if event.type() == QEvent.KeyPress and self.isActiveWindow():
+            fw = QApplication.focusWidget()
+            if not isinstance(fw, (QLineEdit, QAbstractSpinBox)) and self._handle_key(event):
+                return True
+        return super().eventFilter(obj, event)
 
     def _on_frame_clicked(self, item: dict, modifiers=None) -> None:
         if item["kind"] == "mic":

@@ -51,6 +51,13 @@ def test_sorter_keyboard(tmp_path, monkeypatch):
     assert s._ref_index == 1
     _press(s, Qt.Key_Left)
     assert s._ref_index == 0
+    # Shift+arrow starts & extends the marked range from the anchor
+    _press(s, Qt.Key_Right, shift=True)
+    _press(s, Qt.Key_Right, shift=True)
+    assert s._selection == {0, 1, 2} and s._ref_index == 2
+    _press(s, Qt.Key_Left)  # plain arrow clears the selection again
+    assert s._selection == set()
+    s._ref_index = 0
     _press(s, Qt.Key_Delete)  # Entf on 00000 -> move to _aussortiert
     assert (fol / "_aussortiert" / "00000.png").exists()
     cur = s._paths[s._ref_index].name
@@ -68,6 +75,10 @@ def test_crop_keyboard(tmp_path, monkeypatch):
     c._ref_index = 2
     _press(c, Qt.Key_Right)
     assert c._ref_index == 3
+    _press(c, Qt.Key_Left, shift=True)  # extend the marked range
+    assert c._selection == {2, 3} and c._ref_index == 2
+    _press(c, Qt.Key_Right)  # plain arrow clears it and steps on
+    assert c._selection == set() and c._ref_index == 3
     _press(c, Qt.Key_Delete)  # move 00030
     assert (fol / "_aussortiert" / "00030.png").exists()
     cur = c._paths[c._ref_index].name
@@ -86,6 +97,11 @@ def test_player_keyboard(tmp_path, monkeypatch):
     assert p._current_slide == "00020.png"
     _press(p, Qt.Key_Left)
     assert p._current_slide == "00010.png"
+    # Shift+arrow starts & extends the marked range (by slide name)
+    _press(p, Qt.Key_Right, shift=True)
+    assert p._selection == {"00010.png", "00020.png"} and p._current_slide == "00020.png"
+    _press(p, Qt.Key_Left)  # plain arrow clears it
+    assert p._selection == set() and p._current_slide == "00010.png"
     _press(p, Qt.Key_Delete)  # move current
     assert (fol / "_aussortiert" / "00010.png").exists()
     cur = p._current_slide
