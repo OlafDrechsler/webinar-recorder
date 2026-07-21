@@ -605,6 +605,8 @@ class CropWindow(QWidget):
         # Restrict to the selected range (None = all slides).
         bounded = self._range_start is not None or self._range_end is not None
         names = {p.name for p in self._paths[lo:hi + 1]} if bounded else None
+        # after the crop, jump to the slide right after the 'bis hier' end
+        after_name = self._paths[hi + 1].name if hi + 1 < len(self._paths) else None
         if not self._backup:
             if not ask_yes_no(self, tr("crop.overwrite_title"), tr("crop.overwrite_body")):
                 return
@@ -625,7 +627,8 @@ class CropWindow(QWidget):
         # Crop applied — sizes changed, so drop the rectangle and reload.
         self._canvas.reset()
         self._paths = slide_frames(self._folder)
-        self._ref_index = min(self._ref_index, max(0, len(self._paths) - 1))
+        idx = next((i for i, p in enumerate(self._paths) if p.name == after_name), None)
+        self._ref_index = idx if idx is not None else min(self._ref_index, max(0, len(self._paths) - 1))
         self._refresh_ref()
         self._filmstrip.set_session(self._paths)
         self._filmstrip.set_browse_mode(True)

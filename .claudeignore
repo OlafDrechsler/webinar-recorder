@@ -1,0 +1,22 @@
+# .claudeignore für dieses Python-Projekt
+
+# 1. Python Caches (Unbedingt ignorieren, riesige Token-Fresser)
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 2. Medien, Grafiken & Aufnahmen (Binärdaten verbrauchen nur Kontext)
+assets/
+images/
+recordings/
+
+# 3. Logdateien von Installationen (Enthalten nur Textwiederholungen)
+install_log_*.txt
+*.log
+
+# 4. Betriebssystem-Spezifisches & Git-Interna
+.git/
+.DS_Store
+Thumbs.db

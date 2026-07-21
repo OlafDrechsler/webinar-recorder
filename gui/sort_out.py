@@ -530,6 +530,7 @@ class SortOutWindow(QWidget):
         self._compare_idx = 0  # index of the last kept NON-annotated frame (compare ref)
         self._cand = 0         # next candidate index the scan will examine
         self._run_hi = 0       # last index of the scanned range
+        self._after_range_name: str | None = None  # slide right after the 'bis hier' end
         self._marked: set[str] = set()  # names of duplicates (red), kept for review
         self._range_start: int | None = None  # action range (indices into _paths)
         self._range_end: int | None = None
@@ -945,6 +946,11 @@ class SortOutWindow(QWidget):
         if not (lo <= self._ref_index <= hi):  # mask drawn on a slide not scanned?
             if not ask_yes_no(self, tr("range.outside_title"), tr("range.outside_body")):
                 return
+        # remember the slide right after the 'bis hier' end (only when a range was set),
+        # so after executing the action we can jump to it.
+        explicit_end = self._range_end if self._range_end is not None else len(self._paths) - 1
+        self._after_range_name = (
+            self._paths[explicit_end + 1].name if explicit_end + 1 < len(self._paths) else None)
         set_sortout_config(self._config_dict())
         self._mask = mask
         self._fraction_val = self._fraction()
@@ -1074,7 +1080,12 @@ class SortOutWindow(QWidget):
         self._marked = set()
         self._clear_selection()
         self._paths = slide_frames(self._folder)
-        idx = next((i for i, p in enumerate(self._paths) if p.name == kept), None)
+        # prefer the slide right after the 'bis hier' end; fall back to the last shown slide
+        target = self._after_range_name or kept
+        idx = next((i for i, p in enumerate(self._paths) if p.name == target), None)
+        if idx is None and target != kept:
+            idx = next((i for i, p in enumerate(self._paths) if p.name == kept), None)
+        self._after_range_name = None
         self._ref_index = idx if idx is not None else min(self._ref_index, max(0, len(self._paths) - 1))
         self._refresh_ref()
         self._filmstrip.set_session(self._paths)
