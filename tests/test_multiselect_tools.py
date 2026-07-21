@@ -36,7 +36,7 @@ def _webinar(tmp_path, n=5):
 def test_sorter_ctrl_shift_and_bulk_move(tmp_path, monkeypatch):
     monkeypatch.setattr(so, "ask_yes_no", lambda *a, **k: True)
     s = SortOutWindow()
-    s._load_folder(_webinar(tmp_path)[0])
+    s._load_folder(_webinar(tmp_path, n=6)[0])
     s._action = "move"
     s._on_strip_click(1, Qt.ControlModifier)
     s._on_strip_click(3, Qt.ControlModifier)
@@ -47,6 +47,8 @@ def test_sorter_ctrl_shift_and_bulk_move(tmp_path, monkeypatch):
     fol = tmp_path / "Webinar" / "folien"
     assert sorted(p.name for p in (fol / "_aussortiert").glob("*.png")) == ["00030.png", "00040.png"]
     assert s._selection == set()
+    # slide after the last selected one (00040) is framed & shown
+    assert s._paths[s._ref_index].name == "00050.png"
 
 
 def test_crop_bulk_delete(tmp_path, monkeypatch):
@@ -59,6 +61,8 @@ def test_crop_bulk_delete(tmp_path, monkeypatch):
     assert c._selection == {0, 2}
     c._remove_selected(move=False)
     assert sorted(p.name for p in fol.glob("*.png")) == ["00010.png", "00030.png", "00040.png"]
+    # slide after the last selected one (00020) is framed & shown
+    assert c._paths[c._ref_index].name == "00030.png"
 
 
 def test_crop_single_move_and_delete_menu_actions(tmp_path, monkeypatch):
@@ -88,3 +92,5 @@ def test_player_bulk_delete(tmp_path, monkeypatch):
     p._remove_selected(move=False)
     assert sorted(x.name for x in fol.glob("*.png")) == ["00010.png", "00030.png", "00040.png"]
     assert p._selection == set()
+    # the slide right after the last selected one (00020) is framed & shown
+    assert p._current_slide == "00030.png"

@@ -721,6 +721,9 @@ class SortOutWindow(QWidget):
             if not ask_yes_no(self, tr("multi.delete_title"), tr("multi.delete_body", n=len(names))):
                 return
         shown = self._paths[self._ref_index].name if 0 <= self._ref_index < len(self._paths) else None
+        # slide right after the last selected one -> framed & shown afterwards
+        last = max(self._selection)
+        after = self._paths[last + 1].name if last + 1 < len(self._paths) else None
         for name in names:
             if move:
                 move_slide(self._folder, name)
@@ -730,7 +733,7 @@ class SortOutWindow(QWidget):
                 except OSError:
                     pass
         self._clear_selection()
-        self._reload_showing(shown if shown not in names else "")
+        self._reload_showing(after or (shown if shown not in names else ""))
 
     def _effective_range(self) -> tuple[int, int]:
         """(lo, hi) the action applies to; full list when no bound is set."""

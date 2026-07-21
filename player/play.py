@@ -1014,7 +1014,9 @@ class Player(QWidget):
         if not move:
             if not ask_yes_no(self, tr("multi.delete_title"), tr("multi.delete_body", n=len(names))):
                 return
-        was_current = self._current_slide in names
+        # slide right after the last selected one -> framed & shown afterwards
+        last = max(self._index_of[n] for n in names)
+        after = self._frames[last + 1].name if last + 1 < len(self._frames) else None
         for name in names:
             if move:
                 move_slide(self._slides_dir, name)
@@ -1025,7 +1027,11 @@ class Player(QWidget):
                     pass
         self._clear_selection()
         self._refresh_frames()
-        if was_current:
+        target = after if after in self._index_of else None
+        if target is not None:
+            self.show_slide(target)
+            self._seek(self._frames[self._index_of[target]].second * 1000)
+        elif self._current_slide in names:  # last selection was at the very end
             self._current_slide = None
             self._update_slide(int(self._system.position() // 1000))
             if self._current_slide is None and self._frames:
