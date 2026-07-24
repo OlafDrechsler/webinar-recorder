@@ -57,7 +57,16 @@ def test_sorter_keyboard(tmp_path, monkeypatch):
     assert s._selection == {0, 1, 2} and s._ref_index == 2
     _press(s, Qt.Key_Left)  # plain arrow clears the selection again
     assert s._selection == set()
-    s._ref_index = 0
+    # Pos1/Ende jump to first/last slide
+    _press(s, Qt.Key_End)
+    assert s._ref_index == len(s._paths) - 1
+    _press(s, Qt.Key_Home)
+    assert s._ref_index == 0
+    # Shift+Ende marks everything from the anchor to the last slide
+    _press(s, Qt.Key_End, shift=True)
+    assert s._selection == set(range(len(s._paths))) and s._ref_index == len(s._paths) - 1
+    _press(s, Qt.Key_Home)  # plain Pos1 clears it and jumps to the first
+    assert s._selection == set() and s._ref_index == 0
     _press(s, Qt.Key_Delete)  # Entf on 00000 -> move to _aussortiert
     assert (fol / "_aussortiert" / "00000.png").exists()
     cur = s._paths[s._ref_index].name
@@ -79,6 +88,13 @@ def test_crop_keyboard(tmp_path, monkeypatch):
     assert c._selection == {2, 3} and c._ref_index == 2
     _press(c, Qt.Key_Right)  # plain arrow clears it and steps on
     assert c._selection == set() and c._ref_index == 3
+    _press(c, Qt.Key_Home)  # Pos1 jumps to the first slide
+    assert c._ref_index == 0
+    _press(c, Qt.Key_End, shift=True)  # Shift+Ende marks through to the last
+    assert c._selection == set(range(len(c._paths))) and c._ref_index == len(c._paths) - 1
+    _press(c, Qt.Key_Home)  # plain Pos1 clears it
+    assert c._selection == set() and c._ref_index == 0
+    c._ref_index = 3
     _press(c, Qt.Key_Delete)  # move 00030
     assert (fol / "_aussortiert" / "00030.png").exists()
     cur = c._paths[c._ref_index].name
@@ -102,6 +118,17 @@ def test_player_keyboard(tmp_path, monkeypatch):
     assert p._selection == {"00010.png", "00020.png"} and p._current_slide == "00020.png"
     _press(p, Qt.Key_Left)  # plain arrow clears it
     assert p._selection == set() and p._current_slide == "00010.png"
+    # Pos1/Ende jump to first/last slide (by frame order)
+    names = [f.name for f in p._frames]
+    _press(p, Qt.Key_End)
+    assert p._current_slide == names[-1]
+    _press(p, Qt.Key_Home)
+    assert p._current_slide == names[0]
+    _press(p, Qt.Key_End, shift=True)  # Shift+Ende marks through to the last
+    assert p._selection == set(names) and p._current_slide == names[-1]
+    _press(p, Qt.Key_Home)  # plain Pos1 clears it
+    assert p._selection == set() and p._current_slide == names[0]
+    p.show_slide("00010.png")
     _press(p, Qt.Key_Delete)  # move current
     assert (fol / "_aussortiert" / "00010.png").exists()
     cur = p._current_slide

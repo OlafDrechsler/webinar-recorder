@@ -792,13 +792,14 @@ class Player(QWidget):
         self.show_slide(frame.name)
         self._seek(frame.second * 1000)
 
-    def _key_navigate(self, delta: int, shift: bool) -> None:
-        """←/→ jump one slide (shown big, audio follows). With Shift the move extends
-        the blue multi-selection from the anchor (start & control the marked range)."""
+    def _key_navigate(self, new_idx: int, shift: bool) -> None:
+        """Jump to slide index ``new_idx`` (shown big, audio follows). With Shift the
+        move extends the blue multi-selection from the anchor (start & control the
+        marked range)."""
         if not self._frames:
             return
         old_idx = self._index_of.get(self._current_slide, 0)
-        new_idx = max(0, min(len(self._frames) - 1, old_idx + delta))
+        new_idx = max(0, min(len(self._frames) - 1, new_idx))
         frame = self._frames[new_idx]
         self.show_slide(frame.name)
         self._seek(frame.second * 1000)
@@ -819,8 +820,16 @@ class Player(QWidget):
         Returns True when the key was consumed."""
         key = event.key()
         shift = bool(event.modifiers() & Qt.ShiftModifier)
-        if key in (Qt.Key_Left, Qt.Key_Right):
-            self._key_navigate(-1 if key == Qt.Key_Left else 1, shift)
+        if key in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Home, Qt.Key_End):
+            if self._frames:
+                if key == Qt.Key_Home:
+                    target = 0
+                elif key == Qt.Key_End:
+                    target = len(self._frames) - 1
+                else:
+                    cur = self._index_of.get(self._current_slide, 0)
+                    target = cur + (-1 if key == Qt.Key_Left else 1)
+                self._key_navigate(target, shift)
             return True
         if key == Qt.Key_Delete:
             move = not shift  # Entf = verschieben, Shift+Entf = endgültig löschen

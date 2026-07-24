@@ -807,13 +807,14 @@ class SortOutWindow(QWidget):
         self._refresh_ref()
         self._filmstrip.center_on(self._ref_index)  # strip follows the big image
 
-    def _key_navigate(self, delta: int, shift: bool) -> None:
-        """←/→ move one slide (clamped). With Shift the move extends the blue
-        multi-selection from the anchor (start & control the marked range)."""
+    def _key_navigate(self, new: int, shift: bool) -> None:
+        """Move the reference to slide index ``new`` (clamped). With Shift the
+        move extends the blue multi-selection from the anchor (start & control
+        the marked range)."""
         if not self._paths:
             return
         old = self._ref_index
-        new = max(0, min(len(self._paths) - 1, old + delta))
+        new = max(0, min(len(self._paths) - 1, new))
         self._ref_index = new
         if shift:
             if self._anchor is None:
@@ -833,9 +834,15 @@ class SortOutWindow(QWidget):
         Returns True when the key was consumed."""
         key = event.key()
         shift = bool(event.modifiers() & Qt.ShiftModifier)
-        if key in (Qt.Key_Left, Qt.Key_Right):
-            if not self._running:
-                self._key_navigate(-1 if key == Qt.Key_Left else 1, shift)
+        if key in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Home, Qt.Key_End):
+            if not self._running and self._paths:
+                if key == Qt.Key_Home:
+                    target = 0
+                elif key == Qt.Key_End:
+                    target = len(self._paths) - 1
+                else:
+                    target = self._ref_index + (-1 if key == Qt.Key_Left else 1)
+                self._key_navigate(target, shift)
             return True
         if key == Qt.Key_Delete:
             if self._running:
