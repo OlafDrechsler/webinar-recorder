@@ -22,3 +22,22 @@ def ask_yes_no(parent, title: str, text: str) -> bool:
     box.setDefaultButton(no)
     box.exec()
     return box.clickedButton() is yes
+
+
+def ask_save_discard_cancel(parent, title: str, text: str) -> str:
+    """Three-way question in the app language; returns "save", "discard" or "cancel".
+    The default (Enter/Escape) button is "cancel" so an accidental key never saves
+    or discards. Used when the recording window is closed via the window's X."""
+    box = QMessageBox(QMessageBox.Question, title, text, QMessageBox.NoButton, parent)
+    save = box.addButton(tr("record.close_save"), QMessageBox.AcceptRole)
+    discard = box.addButton(tr("record.close_discard"), QMessageBox.DestructiveRole)
+    cancel = box.addButton(tr("record.close_cancel"), QMessageBox.RejectRole)
+    box.setDefaultButton(cancel)
+    box.setEscapeButton(cancel)
+    box.exec()
+    clicked = box.clickedButton()
+    if clicked is save:
+        return "save"
+    if clicked is discard:
+        return "discard"
+    return "cancel"

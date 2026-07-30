@@ -229,6 +229,67 @@ def trim_audio(path: Path, end_seconds: float) -> bool:
     return True
 
 
+def trim_audio_start(path: Path, start_seconds: float) -> bool:
+    """Cut an audio file in place to ``[start_seconds, end]`` (lossless stream copy),
+    so the kept part now starts at 0.
+
+    Mirror of :func:`trim_audio` for discarding the BEGINNING of a recording.
+    Returns True on success; on any failure the original is left untouched. The
+    original timestamps are preserved. The caller must release any open handle on
+    ``path`` first (Windows locks files a media player still has open)."""
+    path = Path(path)
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None or start_seconds <= 0:
+        return False
+    tmp = path.with_name(f"{path.stem}_trim{path.suffix}")
+    # -ss before -i seeks fast; -avoid_negative_ts make_zero re-bases timestamps to 0.
+    cmd = [ffmpeg, "-y", "-ss", f"{start_seconds:.3f}", "-i", str(path),
+           "-c", "copy", "-avoid_negative_ts", "make_zero", str(tmp)]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, creationflags=_NO_WINDOW)
+    except (subprocess.CalledProcessError, OSError):
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False
+    _copy_timestamps(path, tmp)  # keep the recording's date, not now
+    try:
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False
+    return True
+
+
+_DURATION = re.compile(r"Duration:\s*(\d+):(\d\d):(\d\d(?:\.\d+)?)")
+
+
+def audio_duration(path: Path) -> float | None:
+    """Length of an audio file in seconds, or None if it can't be determined.
+
+    Parsed from ``ffmpeg -i`` (which prints "Duration: HH:MM:SS.ss" to stderr and
+    exits non-zero because no output is given — that's expected). Used to tell
+    whether a mic segment spans a cut point."""
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        return None
+    try:
+        proc = subprocess.run([ffmpeg, "-i", str(path)], capture_output=True,
+                              creationflags=_NO_WINDOW)
+    except OSError:
+        return None
+    text = proc.stderr.decode("utf-8", "replace")
+    m = _DURATION.search(text)
+    if not m:
+        return None
+    h, mnt, sec = int(m.group(1)), int(m.group(2)), float(m.group(3))
+    return h * 3600 + mnt * 60 + sec
+
+
 def transcode_to_mp3(
     wav_path: Path, bitrate: str = "96k", delete_wav: bool = True, gain_db: float = 0.0
 ) -> Path:

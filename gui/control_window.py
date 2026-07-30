@@ -22,6 +22,7 @@ changed slides are saved.
 from __future__ import annotations
 
 import datetime as _dt
+import shutil
 import time
 from pathlib import Path
 
@@ -43,6 +44,7 @@ from core.i18n import tr
 from core.naming import auto_frame_name
 from core.settings import get_data_dir, set_data_dir
 from gui.branding import APP_NAME, app_icon
+from gui.dialogs import ask_save_discard_cancel, ask_yes_no
 from gui.mic_test import MicLevelWindow
 from gui.region_selector import select_region
 from gui.work_area import WorkAreaWindow
@@ -88,9 +90,12 @@ class ControlWindow(QWidget):
         self._system: SystemAudioRecorder | None = None
         self._mic = SegmentedMicRecorder(self._base, 0.0, device_name=mic_device)
         self._system_wav: Path | None = None
+        self._session: Path | None = None  # set when recording starts (for discard)
         self._slides_dir: Path | None = None
         self._start: float | None = None  # set when recording starts
         self._recording = False
+        self._abort = False     # discard intent (abort button or X-dialog "discard")
+        self._stopping = False  # save intent (the "Aufnahme beenden" button)
         self._capturer = ScreenCapturer()
         self._state = CaptureState()
         self._region: Region | None = None
@@ -117,6 +122,12 @@ class ControlWindow(QWidget):
         self._record_btn = QPushButton(tr("record.start"))
         self._record_btn.setStyleSheet("font-weight: bold; padding: 6px;")
         self._record_btn.clicked.connect(self._toggle_recording)
+        # Discard the running recording without any post-processing; only usable
+        # while recording, so it starts disabled.
+        self._abort_btn = QPushButton(tr("record.abort"))
+        self._abort_btn.setStyleSheet("color: #c0392b; padding: 4px;")
+        self._abort_btn.setEnabled(False)
+        self._abort_btn.clicked.connect(self._abort_recording)
         self._region_btn = QPushButton(tr("record.region_choose"))
         self._region_btn.clicked.connect(self._reselect_region)
         self._photo_btn = QPushButton()
@@ -157,6 +168,7 @@ class ControlWindow(QWidget):
         layout = QVBoxLayout(self)
         layout.addLayout(folder_row)
         layout.addWidget(self._record_btn)
+        layout.addWidget(self._abort_btn)
         layout.addLayout(row1)
         layout.addLayout(row2)
         layout.addLayout(row3)
@@ -203,7 +215,17 @@ class ControlWindow(QWidget):
         if not self._recording:
             self._start_recording()
         else:
+            self._stopping = True  # deliberate "stop & save"; closeEvent skips the X-dialog
             self.close()  # closeEvent stops recorders and runs post-processing
+
+    def _abort_recording(self) -> None:
+        # Discard the running recording: no post-processing, delete the whole session.
+        if not self._recording:
+            return
+        if not ask_yes_no(self, tr("record.abort_title"), tr("record.abort_text")):
+            return
+        self._abort = True
+        self.close()  # closeEvent stops recorders, skips processing, removes the folder
 
     def _start_recording(self) -> None:
         # Create the session folder under the chosen base now, then start. t0 is
@@ -211,6 +233,7 @@ class ControlWindow(QWidget):
         # already monitoring, enable_recording flips it to writing without a gap.
         stamp = _dt.datetime.now().strftime("%Y-%m-%d_%H-%M")
         session = self._base / f"Webinar_{stamp}"
+        self._session = session
         self._slides_dir = session / "folien"
         mic_dir = session / "mikro"
         self._slides_dir.mkdir(parents=True, exist_ok=True)
@@ -224,6 +247,7 @@ class ControlWindow(QWidget):
         self._mic.enable_recording(self._start)
         self._recording = True
         self._record_btn.setText(tr("record.stop"))
+        self._abort_btn.setEnabled(True)  # discard available while recording
         self._folder_btn.setEnabled(False)  # locked once recording
         self._refresh_labels()
 
@@ -312,6 +336,19 @@ class ControlWindow(QWidget):
 
     # ----- shutdown -----
     def closeEvent(self, event) -> None:  # noqa: N802
+        # Closing via the window's X while recording (neither button was used): ask
+        # what to do before stopping anything, so "keep recording" leaves it running.
+        if self._recording and not self._stopping and not self._abort:
+            choice = ask_save_discard_cancel(
+                self, tr("record.close_title"), tr("record.close_text")
+            )
+            if choice == "cancel":
+                event.ignore()
+                return
+            if choice == "discard":
+                self._abort = True
+            # "save" -> fall through to the normal stop & post-process path
+
         self._timer.stop()
         self._status_timer.stop()
         try:
@@ -324,9 +361,13 @@ class ControlWindow(QWidget):
         self._mic.stop()
         if self._system is not None:
             self._system.stop()
-        # Post-process (loudness-match + MP3) if a recording was made.
-        if self._on_process is not None and self._system_wav is not None and (
+        if self._abort and self._session is not None:
+            # Discard: drop the whole session, run no post-processing. Handles are
+            # released above; ignore_errors so a lingering lock can't block the close.
+            shutil.rmtree(self._session, ignore_errors=True)
+        elif self._on_process is not None and self._system_wav is not None and (
             self._system_wav.exists() or self._mic.segments
         ):
+            # Post-process (loudness-match + MP3) if a recording was made.
             self._on_process(self._system_wav, self._mic.segments)
         super().closeEvent(event)

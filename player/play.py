@@ -64,6 +64,7 @@ from core.settings import (
     set_player_volumes,
 )
 from core.slide_timeline import slide_for_second
+from core.discard import count_before_second, discard_before_second
 from io_adapters.encode import trim_audio
 from gui.branding import APP_NAME, app_icon
 from gui.dialogs import ask_yes_no
@@ -124,6 +125,28 @@ class _DiscardWorker(QObject):
                 p.unlink()
             except OSError:
                 pass
+        self.finished.emit()
+
+
+class _DiscardBeforeWorker(QObject):
+    """Discards the BEGINNING off the GUI thread: waits for the system track to be
+    writable, then trims its head and renumbers slides + mic segments (all handled
+    by ``discard_before_second``)."""
+
+    finished = Signal()
+
+    def __init__(self, session_dir: Path, slides_dir: Path, sys_track: Path | None,
+                 t_seconds: int) -> None:
+        super().__init__()
+        self._session_dir = session_dir
+        self._slides_dir = slides_dir
+        self._sys_track = sys_track
+        self._t_seconds = t_seconds
+
+    def run(self) -> None:
+        if self._sys_track is not None:
+            _wait_file_writable(self._sys_track)
+        discard_before_second(self._session_dir, self._slides_dir, self._t_seconds)
         self.finished.emit()
 
 
@@ -926,12 +949,15 @@ class Player(QWidget):
         act_move = menu.addAction(tr("sort.menu_move"))
         act_del = menu.addAction(tr("sort.menu_delete"))
         act_discard = None
+        act_discard_before = None
         # The time is shown in the label so it's clear the cut is at the PLAYHEAD,
         # not at this slide's timestamp. Snapshot it so the action cuts at exactly
         # the advertised time even if playback keeps running.
         t_ms = self._system.position()
         if allow_discard:
             menu.addSeparator()
+            act_discard_before = menu.addAction(tr("player.discard_before_here", time=_fmt(t_ms)))
+            act_discard_before.setEnabled(t_ms > 0)
             act_discard = menu.addAction(tr("player.discard_here", time=_fmt(t_ms)))
             act_discard.setEnabled(t_ms > 0)
         chosen = menu.exec(QCursor.pos())
@@ -945,6 +971,8 @@ class Player(QWidget):
             self._remove_slide(name, move=True)
         elif chosen == act_del:
             self._remove_slide(name, move=False)
+        elif act_discard_before is not None and chosen == act_discard_before:
+            self._discard_before_here(t_ms)
         elif act_discard is not None and chosen == act_discard:
             self._discard_from_here(t_ms)
 
@@ -981,6 +1009,37 @@ class Player(QWidget):
         self._run_with_progress(
             tr("player.trimming"),
             _DiscardWorker(sys_track, t_ms / 1000.0, doomed_paths),
+        )
+        self.load_session(session)
+
+    def _discard_before_here(self, t_ms: int) -> None:
+        """Trim the system track's head at ``t_ms`` (the playhead) and permanently
+        delete + renumber the slides and mic segments before it, so the recording
+        restarts at 0 (irreversible; confirmed first). The slide shown at the
+        playhead becomes the new first slide."""
+        if self._slides_dir is None or t_ms <= 0:
+            return
+        session = self._slides_dir.parent
+        sys_track = _find_track(session, "system")
+        t_seconds = t_ms // 1000
+        n_slides, n_mics = count_before_second(self._slides_dir, session / "mikro", t_seconds)
+        if not ask_yes_no(
+            self, tr("player.discard_before_title"),
+            tr("player.discard_before_body", time=_fmt(t_ms), s=n_slides, n=n_mics),
+        ):
+            return
+        # Release every open handle before touching files (Windows locks them);
+        # the actual trim/rename runs in a worker while a progress dialog shows.
+        if self._is_playing():
+            self._toggle_play()
+        self._system.stop()
+        self._system.setSource(QUrl())
+        for s in self._segments:
+            s.dispose()
+        self._segments = []
+        self._run_with_progress(
+            tr("player.trimming"),
+            _DiscardBeforeWorker(session, self._slides_dir, sys_track, t_seconds),
         )
         self.load_session(session)
 

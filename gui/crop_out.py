@@ -34,7 +34,12 @@ from PySide6.QtWidgets import (
 )
 
 from core.crop import Box, crop_folder
-from core.discard import count_from_second, discard_from_second
+from core.discard import (
+    count_before_second,
+    count_from_second,
+    discard_before_second,
+    discard_from_second,
+)
 from core.i18n import tr
 from core.settings import get_data_dir, get_last_session, set_last_session
 from gui.branding import APP_NAME, app_icon
@@ -389,6 +394,8 @@ class CropWindow(QWidget):
         act_clear.setEnabled(self._range_start is not None or self._range_end is not None)
         menu.addSeparator()
         t = slide_second(self._paths[index].name)
+        act_discard_before = menu.addAction(tr("discard.before_here", time=fmt_seconds(t or 0)))
+        act_discard_before.setEnabled(t is not None)
         act_discard = menu.addAction(tr("discard.from_here", time=fmt_seconds(t or 0)))
         act_discard.setEnabled(t is not None)
         chosen = menu.exec(QCursor.pos())
@@ -404,6 +411,8 @@ class CropWindow(QWidget):
             self._apply_range_highlight()
         elif chosen == act_clear:
             self._clear_range()
+        elif chosen == act_discard_before:
+            self._discard_before(index)
         elif chosen == act_discard:
             self._discard_from(index)
 
@@ -436,6 +445,37 @@ class CropWindow(QWidget):
         self._clear_selection()
         self._sync_scroll()
         self._status.setText(tr("discard.done", time=fmt_seconds(t), slides=n_slides, mics=n_mics))
+
+    def _discard_before(self, index: int) -> None:
+        """Discard the beginning: trim the system track's head at this slide's second,
+        delete slides/mic segments before it and renumber the rest to start at 0
+        (irreversible; confirmed)."""
+        if not (0 <= index < len(self._paths)):
+            return
+        t = slide_second(self._paths[index].name)
+        if t is None:
+            return
+        session = webinar_dir(self._folder)
+        n_slides, n_mics = count_before_second(self._folder, session / "mikro", t)
+        if not ask_yes_no(self, tr("discard.before_confirm_title"),
+                          tr("discard.before_confirm_body", time=fmt_seconds(t), slides=n_slides, mics=n_mics)):
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            discard_before_second(session, self._folder, t)
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._canvas.reset()
+        self._paths = slide_frames(self._folder)
+        self._ref_index = min(self._ref_index, max(0, len(self._paths) - 1))
+        self._refresh_ref()
+        self._filmstrip.set_session(self._paths)
+        self._filmstrip.set_browse_mode(True)
+        self._filmstrip.center_on(self._ref_index)
+        self._clear_range()
+        self._clear_selection()
+        self._sync_scroll()
+        self._status.setText(tr("discard.before_done", time=fmt_seconds(t), slides=n_slides, mics=n_mics))
 
     def _bulk_menu(self) -> None:
         n = len(self._selection)

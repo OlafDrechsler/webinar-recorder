@@ -166,6 +166,41 @@ TRANSLATIONS: dict[str, dict] = {
                        "Avvia registrazione", "Iniciar gravação", "Opname starten", "Rozpocznij nagrywanie", "Kaydı başlat"),
     "record.stop": _t("Aufnahme beenden", "Stop recording", "Arrêter l'enregistrement", "Detener grabación",
                       "Termina registrazione", "Parar gravação", "Opname stoppen", "Zatrzymaj nagrywanie", "Kaydı durdur"),
+    "record.abort": _t("Aufnahme abbrechen", "Discard recording", "Annuler l'enregistrement", "Descartar grabación",
+                       "Annulla registrazione", "Descartar gravação", "Opname verwerpen", "Odrzuć nagranie", "Kaydı iptal et"),
+    "record.abort_title": _t("Aufnahme verwerfen", "Discard recording", "Supprimer l'enregistrement",
+                             "Descartar grabación", "Elimina registrazione", "Descartar gravação", "Opname verwerpen",
+                             "Odrzuć nagranie", "Kaydı sil"),
+    "record.abort_text": _t(
+        "Aufnahme wirklich verwerfen? Alle aufgenommenen Bilder und Tonaufnahmen werden gelöscht und nicht weiterverarbeitet.",
+        "Really discard the recording? All captured slides and audio will be deleted and not processed.",
+        "Vraiment supprimer l'enregistrement ? Toutes les diapositives et le son capturés seront supprimés sans traitement.",
+        "¿Descartar la grabación? Todas las diapositivas y el audio capturados se eliminarán sin procesar.",
+        "Eliminare davvero la registrazione? Tutte le diapositive e l'audio acquisiti verranno cancellati senza elaborazione.",
+        "Descartar mesmo a gravação? Todos os slides e o áudio capturados serão apagados sem processamento.",
+        "Opname echt verwerpen? Alle vastgelegde dia's en audio worden verwijderd en niet verwerkt.",
+        "Na pewno odrzucić nagranie? Wszystkie zarejestrowane slajdy i dźwięk zostaną usunięte bez przetwarzania.",
+        "Kayıt gerçekten silinsin mi? Yakalanan tüm slaytlar ve ses işlenmeden silinecek."),
+    "record.close_title": _t("Aufnahme läuft noch", "Recording still running", "Enregistrement en cours",
+                             "Grabación en curso", "Registrazione in corso", "Gravação em andamento", "Opname loopt nog",
+                             "Nagrywanie trwa", "Kayıt hâlâ sürüyor"),
+    "record.close_text": _t("Was möchtest du mit der laufenden Aufnahme tun?",
+                            "What do you want to do with the running recording?",
+                            "Que voulez-vous faire de l'enregistrement en cours ?",
+                            "¿Qué quieres hacer con la grabación en curso?",
+                            "Cosa vuoi fare con la registrazione in corso?",
+                            "O que deseja fazer com a gravação em andamento?",
+                            "Wat wil je met de lopende opname doen?",
+                            "Co chcesz zrobić z trwającym nagraniem?",
+                            "Süren kayıtla ne yapmak istiyorsun?"),
+    "record.close_save": _t("Beenden & speichern", "Stop & save", "Arrêter et enregistrer", "Detener y guardar",
+                            "Termina e salva", "Parar e guardar", "Stoppen & opslaan", "Zatrzymaj i zapisz",
+                            "Durdur ve kaydet"),
+    "record.close_discard": _t("Verwerfen", "Discard", "Supprimer", "Descartar", "Elimina", "Descartar", "Verwerpen",
+                               "Odrzuć", "Sil"),
+    "record.close_cancel": _t("Weiter aufnehmen", "Keep recording", "Continuer l'enregistrement", "Seguir grabando",
+                              "Continua a registrare", "Continuar gravando", "Doorgaan met opnemen", "Nagrywaj dalej",
+                              "Kayda devam et"),
     "record.region_choose": _t("Aufnahmebereich wählen", "Choose capture area", "Choisir la zone de capture",
                                "Elegir área de captura", "Scegli area di cattura", "Escolher área de captura",
                                "Opnamegebied kiezen", "Wybierz obszar", "Yakalama alanını seç"),
@@ -449,6 +484,46 @@ TRANSLATIONS: dict[str, dict] = {
                        "Vanaf {time} verworpen: {slides} dia's, {mics} microfoonsegmenten.",
                        "Odrzucono od {time}: {slides} slajdów, {mics} segmentów mikrofonu.",
                        "{time} itibarıyla silindi: {slides} slayt, {mics} mikrofon segmenti."),
+    "discard.before_here": _t("Anfang bis hier verwerfen ({time})", "Discard beginning up to here ({time})",
+                              "Supprimer le début jusqu'ici ({time})",
+                              "Descartar el principio hasta aquí ({time})",
+                              "Scarta l'inizio fino a qui ({time})",
+                              "Descartar o início até aqui ({time})",
+                              "Begin tot hier verwerpen ({time})", "Odrzuć początek do tego miejsca ({time})",
+                              "Başlangıcı buraya kadar sil ({time})"),
+    "discard.before_confirm_title": _t("Anfang bis hier verwerfen?", "Discard beginning up to here?",
+                                       "Supprimer le début jusqu'ici ?", "¿Descartar el principio hasta aquí?",
+                                       "Scartare l'inizio fino a qui?", "Descartar o início até aqui?",
+                                       "Begin tot hier verwerpen?", "Odrzucić początek do tego miejsca?",
+                                       "Başlangıç buraya kadar silinsin mi?"),
+    "discard.before_confirm_body": _t(
+        "Alles vor {time} wird endgültig entfernt: {slides} Folien, {mics} Mikro-Segmente und der Tonspur-Anfang. "
+        "Die Aufnahme beginnt danach neu bei 0. Das kann nicht rückgängig gemacht werden. Fortfahren?",
+        "Everything before {time} will be permanently removed: {slides} slides, {mics} mic segments and the start "
+        "of the audio track. The recording then restarts at 0. This cannot be undone. Continue?",
+        "Tout ce qui précède {time} sera supprimé définitivement : {slides} diapositives, {mics} segments micro et "
+        "le début de la piste audio. L'enregistrement recommence alors à 0. Action irréversible. Continuer ?",
+        "Se eliminará definitivamente todo lo anterior a {time}: {slides} diapositivas, {mics} segmentos de "
+        "micrófono y el inicio de la pista de audio. La grabación se reinicia en 0. No se puede deshacer. ¿Continuar?",
+        "Tutto ciò che precede {time} verrà rimosso definitivamente: {slides} diapositive, {mics} segmenti "
+        "microfono e l'inizio della traccia audio. La registrazione riparte da 0. Irreversibile. Continuare?",
+        "Tudo antes de {time} será removido definitivamente: {slides} slides, {mics} segmentos de microfone e o "
+        "início da faixa de áudio. A gravação recomeça em 0. Não pode ser desfeito. Continuar?",
+        "Alles vóór {time} wordt definitief verwijderd: {slides} dia's, {mics} microfoonsegmenten en het begin van "
+        "het audiospoor. De opname begint daarna opnieuw bij 0. Dit kan niet ongedaan worden gemaakt. Doorgaan?",
+        "Wszystko przed {time} zostanie trwale usunięte: {slides} slajdów, {mics} segmentów mikrofonu i początek "
+        "ścieżki audio. Nagranie zacznie się od 0. Nie można cofnąć. Kontynuować?",
+        "{time} öncesindeki her şey kalıcı olarak silinecek: {slides} slayt, {mics} mikrofon segmenti ve ses "
+        "parçasının başı. Kayıt ardından 0'dan başlar. Geri alınamaz. Devam edilsin mi?"),
+    "discard.before_done": _t("Anfang bis {time} verworfen: {slides} Folien, {mics} Mikro-Segmente.",
+                              "Discarded beginning up to {time}: {slides} slides, {mics} mic segments.",
+                              "Début supprimé jusqu'à {time} : {slides} diapositives, {mics} segments micro.",
+                              "Principio descartado hasta {time}: {slides} diapositivas, {mics} segmentos de micrófono.",
+                              "Inizio scartato fino a {time}: {slides} diapositive, {mics} segmenti microfono.",
+                              "Início descartado até {time}: {slides} slides, {mics} segmentos de microfone.",
+                              "Begin tot {time} verworpen: {slides} dia's, {mics} microfoonsegmenten.",
+                              "Odrzucono początek do {time}: {slides} slajdów, {mics} segmentów mikrofonu.",
+                              "{time} kadar başlangıç silindi: {slides} slayt, {mics} mikrofon segmenti."),
     "range.from_here": _t("Aktion ab hier", "Action from here", "Action à partir d'ici",
                           "Acción desde aquí", "Azione da qui", "Ação a partir daqui",
                           "Actie vanaf hier", "Akcja od tego miejsca", "Buradan itibaren uygula"),
@@ -686,6 +761,40 @@ TRANSLATIONS: dict[str, dict] = {
         "tego czasu zostanie trwale usuniętych. Tej operacji nie można cofnąć.",
         "Sistem kaydı {time} itibarıyla silinsin mi? Kırpılacak ve o andan itibaren {s} slayt ve {n} mikrofon "
         "segmenti kalıcı olarak silinecek. Bu geri alınamaz."),
+    "player.discard_before_here": _t(
+        "Anfang bis zur aktuellen Zeit verwerfen ({time})",
+        "Discard beginning up to current time ({time})",
+        "Supprimer le début jusqu'à l'instant actuel ({time})",
+        "Descartar el principio hasta el momento actual ({time})",
+        "Scarta l'inizio fino all'istante attuale ({time})",
+        "Descartar o início até o instante atual ({time})",
+        "Begin tot huidige tijd verwerpen ({time})",
+        "Odrzuć początek do bieżącego czasu ({time})",
+        "Başlangıcı geçerli ana kadar sil ({time})"),
+    "player.discard_before_title": _t("Anfang verwerfen?", "Discard beginning?", "Supprimer le début ?",
+                                      "¿Descartar el principio?", "Scartare l'inizio?", "Descartar o início?",
+                                      "Begin verwerpen?", "Odrzucić początek?", "Başlangıç silinsin mi?"),
+    "player.discard_before_body": _t(
+        "System-Spur bis {time} verwerfen? Der Anfang wird abgeschnitten und {s} Folien sowie {n} Mikro-Segmente "
+        "davor werden endgültig gelöscht. Die Aufnahme beginnt danach neu bei 0. Das kann nicht rückgängig gemacht "
+        "werden.",
+        "Discard the system track up to {time}? The beginning is cut off and {s} slides plus {n} mic segments "
+        "before it will be permanently deleted. The recording then restarts at 0. This cannot be undone.",
+        "Supprimer la piste système jusqu'à {time} ? Le début est coupé et {s} diapositives ainsi que {n} segments "
+        "micro qui précèdent seront définitivement supprimés. L'enregistrement recommence à 0. Action irréversible.",
+        "¿Descartar la pista del sistema hasta {time}? Se corta el principio y se eliminarán definitivamente {s} "
+        "diapositivas y {n} segmentos de micrófono anteriores. La grabación se reinicia en 0. No se puede deshacer.",
+        "Scartare la traccia di sistema fino a {time}? L'inizio viene tagliato e {s} diapositive e {n} segmenti "
+        "microfono precedenti saranno eliminati definitivamente. La registrazione riparte da 0. Irreversibile.",
+        "Descartar a faixa do sistema até {time}? O início é cortado e {s} diapositivos e {n} segmentos de "
+        "microfone anteriores serão eliminados definitivamente. A gravação recomeça em 0. Não pode ser desfeito.",
+        "Systeemspoor tot {time} verwerpen? Het begin wordt afgesneden en {s} dia's plus {n} microfoonsegmenten "
+        "daarvoor worden definitief verwijderd. De opname begint daarna opnieuw bij 0. Dit kan niet ongedaan worden "
+        "gemaakt.",
+        "Odrzucić ścieżkę systemową do {time}? Początek zostanie odcięty, a {s} slajdów i {n} segmentów mikrofonu "
+        "przed nim zostanie trwale usuniętych. Nagranie zacznie się od 0. Tej operacji nie można cofnąć.",
+        "Sistem kaydı {time} kadar silinsin mi? Başlangıç kesilecek ve öncesindeki {s} slayt ve {n} mikrofon "
+        "segmenti kalıcı olarak silinecek. Kayıt ardından 0'dan başlar. Bu geri alınamaz."),
     "player.delete_seg_title": _t("Mikro-Segment löschen?", "Delete mic segment?", "Supprimer le segment micro ?",
                                   "¿Eliminar segmento de micrófono?", "Eliminare segmento microfono?",
                                   "Apagar segmento de microfone?", "Microfoonsegment verwijderen?",
