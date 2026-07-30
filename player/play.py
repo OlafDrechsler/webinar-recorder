@@ -571,12 +571,12 @@ class Player(QWidget):
         self._path_lbl.setStyleSheet("color:#888;")
         self._path_lbl.setMinimumWidth(0)
         self._path_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        choose = QPushButton(tr("player.choose_folder_btn"))
-        choose.clicked.connect(self._choose_folder)
+        self._folder_btn = QPushButton(tr("player.choose_folder_btn"))
+        self._folder_btn.clicked.connect(self._choose_folder)
         header = QHBoxLayout()
         header.addWidget(QLabel(tr("player.folder_label")))
         header.addWidget(self._path_lbl, stretch=1)
-        header.addWidget(choose)
+        header.addWidget(self._folder_btn)
 
         # --- big slide + overlay ---
         self._slide = SlideLabel()
@@ -760,6 +760,7 @@ class Player(QWidget):
         # window).
         self._path_lbl.setText(session.name)
         self._path_lbl.setToolTip(str(session))
+        self._folder_btn.setToolTip(str(session))
         self._rebuild_segment_menu()
         self._slider.setValue(0)
         self._time.setText("00:00 / 00:00")

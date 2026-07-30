@@ -262,12 +262,12 @@ class CropWindow(QWidget):
         self._path_lbl.setStyleSheet("color:#888;")
         self._path_lbl.setMinimumWidth(0)
         self._path_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        folder_btn = QPushButton(tr("player.choose_folder_btn"))
-        folder_btn.clicked.connect(self._choose_folder)
+        self._folder_btn = QPushButton(tr("player.choose_folder_btn"))
+        self._folder_btn.clicked.connect(self._choose_folder)
         folder_row = QHBoxLayout()
         folder_row.addWidget(QLabel(tr("player.folder_label")))
         folder_row.addWidget(self._path_lbl, stretch=1)
-        folder_row.addWidget(folder_btn)
+        folder_row.addWidget(self._folder_btn)
 
         # Big image + prev/next.
         self._canvas = CropCanvas()
@@ -367,6 +367,7 @@ class CropWindow(QWidget):
         self._ref_index = 0
         self._path_lbl.setText(webinar_name(self._folder))
         self._path_lbl.setToolTip(str(self._folder))
+        self._folder_btn.setToolTip(str(self._folder))
         self._canvas.reset()
         self._refresh_ref()
         self._filmstrip.set_session(self._paths)

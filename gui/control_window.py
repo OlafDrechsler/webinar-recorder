@@ -105,18 +105,22 @@ class ControlWindow(QWidget):
         self._mic_test: MicLevelWindow | None = None
 
         # --- UI ---
-        # Folder picker in the header (like the player) — no separate dialog.
+        # Folder picker: the "choose folder" button on top, the storage path on its
+        # own line below (keeps the window narrow). The full path is shown as a
+        # tooltip on the button, the "Speicherort:" prefix and the path label.
         self._path_lbl = QLabel(self._base.name)
         self._path_lbl.setToolTip(str(self._base))
         self._path_lbl.setStyleSheet("color:#888;")
         self._path_lbl.setMinimumWidth(0)
         self._path_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self._folder_btn = QPushButton(tr("player.choose_folder_btn"))
+        self._folder_btn.setToolTip(str(self._base))
         self._folder_btn.clicked.connect(self._choose_folder)
-        folder_row = QHBoxLayout()
-        folder_row.addWidget(QLabel(tr("record.storage_label")))
-        folder_row.addWidget(self._path_lbl, stretch=1)
-        folder_row.addWidget(self._folder_btn)
+        self._storage_lbl = QLabel(tr("record.storage_label"))
+        self._storage_lbl.setToolTip(str(self._base))
+        storage_row = QHBoxLayout()
+        storage_row.addWidget(self._storage_lbl)
+        storage_row.addWidget(self._path_lbl, stretch=1)
 
         # The main start/stop toggle sits on top and is visually prominent.
         self._record_btn = QPushButton(tr("record.start"))
@@ -151,27 +155,28 @@ class ControlWindow(QWidget):
 
         self._status = QLabel()
         self._mic_status = QLabel()
+        self._mic_status.setWordWrap(True)  # wrap instead of forcing the window wide
 
-        row1 = QHBoxLayout()
-        row1.addWidget(self._region_btn)
-        row1.addWidget(self._photo_btn)
-        row2 = QHBoxLayout()
-        row2.addWidget(mark_btn)
-        row3 = QHBoxLayout()
-        row3.addWidget(QLabel(tr("mic.label")))
-        row3.addWidget(self._rb_on)
-        row3.addWidget(self._rb_off)
-        row3.addWidget(self._rb_auto)
-        row3.addStretch(1)
-        row3.addWidget(mic_test_btn)
+        # Mic mode label + the three radios on one row; the level-test button goes
+        # on its own row below (keeps the window narrow).
+        mic_row = QHBoxLayout()
+        mic_row.addWidget(QLabel(tr("mic.label")))
+        mic_row.addWidget(self._rb_on)
+        mic_row.addWidget(self._rb_off)
+        mic_row.addWidget(self._rb_auto)
+        mic_row.addStretch(1)
 
+        # Controls are stacked vertically (one per row) so the window stays narrow.
         layout = QVBoxLayout(self)
-        layout.addLayout(folder_row)
+        layout.addWidget(self._folder_btn)   # "Ordner wählen…" on top
+        layout.addLayout(storage_row)        # "Speicherort: <name>" below
         layout.addWidget(self._record_btn)
         layout.addWidget(self._abort_btn)
-        layout.addLayout(row1)
-        layout.addLayout(row2)
-        layout.addLayout(row3)
+        layout.addWidget(self._region_btn)
+        layout.addWidget(self._photo_btn)
+        layout.addWidget(mark_btn)
+        layout.addLayout(mic_row)
+        layout.addWidget(mic_test_btn)
         layout.addWidget(self._status)
         layout.addWidget(self._mic_status)
 
@@ -208,7 +213,8 @@ class ControlWindow(QWidget):
             self._base = Path(chosen)
             set_data_dir(self._base)
             self._path_lbl.setText(self._base.name)
-            self._path_lbl.setToolTip(str(self._base))
+            for w in (self._path_lbl, self._storage_lbl, self._folder_btn):
+                w.setToolTip(str(self._base))
 
     # ----- recording start/stop -----
     def _toggle_recording(self) -> None:

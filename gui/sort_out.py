@@ -590,6 +590,7 @@ class SortOutWindow(QWidget):
         self._ref_index = 0
         self._path_lbl.setText(webinar_name(self._folder))
         self._path_lbl.setToolTip(str(self._folder))
+        self._folder_btn.setToolTip(str(self._folder))
         self._apply_saved_config()
         self._refresh_ref()
         self._filmstrip.set_session(self._paths)  # first image centred, rest to the right
