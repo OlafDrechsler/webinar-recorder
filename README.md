@@ -35,6 +35,21 @@ Weitere Screenshots im Ordner [`images/`](images): Nachbearbeitung
   Folie zu jedem Zeitpunkt.
 - **Folien aussortieren**: nachträgliches Entdoppeln großer Bildmengen – Sprecher-Bereich
   (Rechteck oder Ellipse) ignorieren, Duplikate verschieben oder löschen.
+- **Folien zuschneiden**: alle Folien auf einen gemeinsamen Ausschnitt beschneiden
+  (z. B. störende Chat-Spalte am Rand entfernen).
+- **Feinschliff im Player**: Aufnahme vorne/hinten kürzen, einzelne Folien annotieren und
+  **Screenshots aus der Zwischenablage** als verschieb-/skalierbares Objekt einfügen.
+
+## Anleitungen
+
+Ausführliche Bedienung der vier Tools und ihres Zusammenspiels im Ordner
+[`docs/`](docs):
+
+- [Zusammenspiel der Tools (Überblick)](docs/Workflow.md)
+- [Aufnahme](docs/Aufnahme.md)
+- [Player](docs/Player.md)
+- [Folien aussortieren](docs/Folien-aussortieren.md)
+- [Folien zuschneiden](docs/Folien-zuschneiden.md)
 
 ## Voraussetzungen
 
