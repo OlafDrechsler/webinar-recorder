@@ -24,7 +24,18 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QGuiApplication,
+    QIcon,
+    QImage,
+    QKeySequence,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -109,14 +120,19 @@ def text_box_top(center_y: float, height: float) -> float:
 
 
 class _Grip(QWidget):
-    """Bottom-right resize handle for a TextItem."""
+    """Bottom-right resize handle for a TextItem or ImageItem.
 
-    def __init__(self, parent: "TextItem") -> None:
+    With ``aspect`` set (width/height), the resize keeps that ratio — used for
+    pasted images so a screenshot is never distorted.
+    """
+
+    def __init__(self, parent: QWidget, aspect: float | None = None) -> None:
         super().__init__(parent)
         self.setFixedSize(16, 16)
         self.setCursor(Qt.SizeFDiagCursor)
         self._origin = QPoint()
         self._size = QSize()
+        self._aspect = aspect
 
     def paintEvent(self, event) -> None:  # noqa: N802
         p = QPainter(self)
@@ -130,10 +146,13 @@ class _Grip(QWidget):
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         delta = event.globalPosition().toPoint() - self._origin
-        self.parent().resize(
-            max(60, self._size.width() + delta.x()),
-            max(28, self._size.height() + delta.y()),
-        )
+        w = max(60, self._size.width() + delta.x())
+        if self._aspect:
+            h = max(28, round(w / self._aspect))
+            w = round(h * self._aspect)  # keep the ratio exact
+        else:
+            h = max(28, self._size.height() + delta.y())
+        self.parent().resize(w, h)
 
 
 class TextItem(QWidget):
@@ -199,6 +218,80 @@ class TextItem(QWidget):
         self._drag_origin = None
 
 
+def fit_pasted_rect(pw: float, ph: float, bw: float, bh: float) -> QRectF:
+    """Initial image-space rect for a pasted pixmap of size ``(pw, ph)`` placed on a
+    base image of ``(bw, bh)``: shrink to fit fully (keeping the aspect ratio) when
+    it is larger than the base, else keep its native size — centred either way."""
+    if pw <= 0 or ph <= 0:
+        return QRectF(0, 0, 0, 0)
+    scale = min(bw / pw, bh / ph, 1.0)
+    w, h = pw * scale, ph * scale
+    return QRectF((bw - w) / 2.0, (bh - h) / 2.0, w, h)
+
+
+class ImageItem(QWidget):
+    """A movable/resizable pasted image (e.g. a screenshot), kept live until save.
+
+    Always interactive (independent of the drawing tool): drag anywhere to move,
+    the bottom-right grip resizes with a fixed aspect ratio, the ``×`` button top
+    right removes it. Baked into the PNG by ``AnnotationCanvas.flattened``.
+    """
+
+    def __init__(self, canvas: "AnnotationCanvas", image_rect: QRectF, pixmap: QPixmap) -> None:
+        super().__init__(canvas)
+        self.canvas = canvas
+        self.image_rect = QRectF(image_rect)
+        self.pixmap = pixmap
+        self._aspect = pixmap.width() / pixmap.height() if pixmap.height() else 1.0
+        self._grip = _Grip(self, aspect=self._aspect)
+        self._del = QPushButton("×", self)
+        self._del.setFixedSize(16, 16)
+        self._del.setCursor(Qt.PointingHandCursor)
+        self._del.setStyleSheet(
+            "QPushButton{background:rgba(60,60,60,180);color:white;border:none;font-weight:bold;}"
+            "QPushButton:hover{background:rgba(200,40,40,220);}"
+        )
+        self._del.clicked.connect(self._remove)
+        self._drag_origin: QPoint | None = None
+        self.setCursor(Qt.SizeAllCursor)
+
+    def _remove(self) -> None:
+        if self in self.canvas._image_items:
+            self.canvas._image_items.remove(self)
+        self.deleteLater()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        self._grip.move(self.width() - 16, self.height() - 16)
+        self._grip.raise_()
+        self._del.move(self.width() - 16, 0)
+        self._del.raise_()
+        if not self.canvas.laying_out:
+            self.image_rect = self.canvas.widget_rect_to_image(self.geometry())
+
+    def moveEvent(self, event) -> None:  # noqa: N802
+        if not self.canvas.laying_out:
+            self.image_rect = self.canvas.widget_rect_to_image(self.geometry())
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        p.drawPixmap(self.rect(), self.pixmap)
+        p.setPen(QPen(QColor(150, 150, 150), 1, Qt.DashLine))
+        p.drawRect(self.rect().adjusted(0, 0, -1, -1))
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        self._drag_origin = event.globalPosition().toPoint()
+        self._start_pos = self.pos()
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._drag_origin is not None:
+            delta = event.globalPosition().toPoint() - self._drag_origin
+            self.move(self._start_pos + delta)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        self._drag_origin = None
+
+
 class AnnotationCanvas(QWidget):
     def __init__(self, base: QPixmap) -> None:
         super().__init__()
@@ -212,6 +305,7 @@ class AnnotationCanvas(QWidget):
         self.text_size = _DEFAULT_TEXT_SIZE
         self._marks: list[Stroke] = []
         self._text_items: list[TextItem] = []
+        self._image_items: list[ImageItem] = []
         self._active: Stroke | None = None
         self._erasing = False
         self.laying_out = False
@@ -292,7 +386,29 @@ class AnnotationCanvas(QWidget):
         for item in self._text_items:
             item.setGeometry(self._to_widget_rect(item.image_rect))
             item.apply_scale(scale)
+        for item in self._image_items:
+            item.setGeometry(self._to_widget_rect(item.image_rect))
         self.laying_out = False
+
+    # ----- pasted images -----
+    def paste_from_clipboard(self) -> bool:
+        """Paste an image from the clipboard as a movable/resizable object.
+
+        Returns False when the clipboard holds no image (so the window can show a
+        hint instead)."""
+        img = QGuiApplication.clipboard().image()
+        if img.isNull():
+            return False
+        pm = QPixmap.fromImage(img)
+        rect = fit_pasted_rect(pm.width(), pm.height(), self._base.width(), self._base.height())
+        item = ImageItem(self, rect, pm)
+        self._image_items.append(item)
+        self.laying_out = True
+        item.setGeometry(self._to_widget_rect(rect))
+        self.laying_out = False
+        item.show()
+        item.raise_()
+        return True
 
     # ----- eraser -----
     def _erase_at(self, widget_pt: QPoint, image_pt: QPointF) -> None:
@@ -374,6 +490,9 @@ class AnnotationCanvas(QWidget):
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.drawPixmap(0, 0, self._base)
         self._draw_marks(painter)  # marks already in image coordinates
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        for item in self._image_items:  # pasted images sit above the strokes
+            painter.drawPixmap(item.image_rect, item.pixmap, QRectF(item.pixmap.rect()))
         for item in self._text_items:
             txt = item.text()
             if not txt.strip():
@@ -409,6 +528,9 @@ class WorkAreaWindow(QWidget):
         eraser_btn = QPushButton(tr("edit.eraser"))
         eraser_btn.clicked.connect(lambda: self._canvas.set_tool(ERASER))
         toolbar.addWidget(eraser_btn)
+        paste_btn = QPushButton(tr("edit.paste"))
+        paste_btn.clicked.connect(self._paste)
+        toolbar.addWidget(paste_btn)
         save_btn = QPushButton(tr("common.save"))
         save_btn.clicked.connect(self._save)
         toolbar.addWidget(save_btn)
@@ -492,6 +614,19 @@ class WorkAreaWindow(QWidget):
         wa = QWidgetAction(menu)
         wa.setDefaultWidget(container)
         menu.addAction(wa)
+
+    def _paste(self) -> None:
+        if not self._canvas.paste_from_clipboard():
+            self._status.setText(tr("edit.paste_empty"))
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        # A focused text box handles Ctrl+V itself (Qt delivers to it first), so
+        # this only fires when the canvas/window has focus — never steals paste
+        # from text editing.
+        if event.matches(QKeySequence.Paste):
+            self._paste()
+            return
+        super().keyPressEvent(event)
 
     def _save(self) -> None:
         if self._save_as:

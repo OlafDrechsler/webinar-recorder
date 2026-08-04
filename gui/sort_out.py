@@ -879,6 +879,9 @@ class SortOutWindow(QWidget):
         Returns True when the key was consumed."""
         key = event.key()
         shift = bool(event.modifiers() & Qt.ShiftModifier)
+        if key == Qt.Key_Escape and self._selection:
+            self._clear_selection()
+            return True
         if key in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Home, Qt.Key_End):
             if not self._running and self._paths:
                 if key == Qt.Key_Home:

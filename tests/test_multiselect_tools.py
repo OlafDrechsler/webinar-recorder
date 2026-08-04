@@ -9,8 +9,8 @@ from PIL import Image
 pytest.importorskip("PySide6")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtGui import QImage  # noqa: E402
+from PySide6.QtCore import QEvent, Qt  # noqa: E402
+from PySide6.QtGui import QImage, QKeyEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 import gui.crop_out as co  # noqa: E402
@@ -94,3 +94,45 @@ def test_player_bulk_delete(tmp_path, monkeypatch):
     assert p._selection == set()
     # the slide right after the last selected one (00020) is framed & shown
     assert p._current_slide == "00030.png"
+
+
+def _esc():
+    return QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier)
+
+
+def test_escape_clears_selection_sorter(tmp_path):
+    s = SortOutWindow()
+    s._load_folder(_webinar(tmp_path, n=6)[0])
+    s._on_strip_click(1, Qt.ControlModifier)
+    s._on_strip_click(3, Qt.ControlModifier)
+    assert s._selection == {1, 3}
+    assert s._handle_key(_esc()) is True
+    assert s._selection == set() and s._filmstrip._selected == set()
+    assert s._handle_key(_esc()) is False  # nothing selected -> not consumed
+
+
+def test_escape_clears_selection_crop(tmp_path):
+    c = CropWindow()
+    c._load_folder(_webinar(tmp_path)[0])
+    c._on_strip_click(0, Qt.ControlModifier)
+    c._on_strip_click(2, Qt.ControlModifier)
+    assert c._selection == {0, 2}
+    assert c._handle_key(_esc()) is True
+    assert c._selection == set()
+    assert c._handle_key(_esc()) is False
+
+
+def test_escape_clears_selection_player(tmp_path):
+    webinar, _ = _webinar(tmp_path)
+    p = Player()
+    p.load_session(webinar)
+
+    def item(name):
+        return next(it for it in p._filmstrip._items if it.get("name") == name)
+
+    p._on_frame_clicked(item("00000.png"), Qt.ControlModifier)
+    p._on_frame_clicked(item("00020.png"), Qt.ControlModifier)
+    assert p._selection == {"00000.png", "00020.png"}
+    assert p._handle_key(_esc()) is True
+    assert p._selection == set()
+    assert p._handle_key(_esc()) is False
