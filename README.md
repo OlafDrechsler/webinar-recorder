@@ -14,10 +14,6 @@ statt parallel mitschreiben zu müssen – und die Datenmenge bleibt klein.
 | --- | --- |
 | ![Steuerfenster](images/MainWindow.png) | ![Aussortieren](images/AutomaticRemove.png) |
 
-Weitere Screenshots im Ordner [`images/`](images): Nachbearbeitung
-(`Postprocessing.png`) und das manuelle Aussortieren im Explorer
-(`ManualRemoveInExplorer_1.png`, `ManualRemoveInExplorer_2.png`).
-
 ## Funktionen
 
 - **Durchgehende Tonaufnahme**: System-Ton (WASAPI-Loopback) + Mikrofon.
